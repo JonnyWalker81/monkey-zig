@@ -4,12 +4,19 @@ const token = @import("token.zig");
 pub const Expression = union(enum) {
     const Self = @This();
 
+    empty: void,
     identifier: Identifier,
     integer: i64,
     prefix: struct {
         operator: []const u8,
-        right: ?*Expression,
+        right: *Expression,
     },
+    infix: struct {
+        left: *Expression,
+        operator: []const u8,
+        right: *Expression,
+    },
+    boolean: bool,
 
     pub fn format(
         self: Self,
@@ -20,6 +27,7 @@ pub const Expression = union(enum) {
         _ = fmt;
 
         switch (self) {
+            .empty => {},
             .identifier => |ident| {
                 try writer.print("{s}", .{ident.identifier});
             },
@@ -27,8 +35,20 @@ pub const Expression = union(enum) {
                 try writer.print("{d}", .{int});
             },
             .prefix => |prefix| {
+                try writer.print("(", .{});
                 try writer.print("{s}", .{prefix.operator});
-                try prefix.right.?.format("{s}", options, writer);
+                try prefix.right.*.format("{s}", options, writer);
+                try writer.print(")", .{});
+            },
+            .infix => |infix| {
+                try writer.print("(", .{});
+                try infix.left.*.format("{s}", options, writer);
+                try writer.print(" {s} ", .{infix.operator});
+                try infix.right.*.format("{s}", options, writer);
+                try writer.print(")", .{});
+            },
+            .boolean => |boolean| {
+                try writer.print("{}", .{boolean});
             },
         }
     }
@@ -41,6 +61,8 @@ pub const Expression = union(enum) {
 
 pub const Statement = union(enum) {
     const Self = @This();
+
+    empty: void,
 
     letStatement: struct {
         identifier: Identifier,
@@ -62,6 +84,7 @@ pub const Statement = union(enum) {
         _ = fmt;
 
         switch (self) {
+            .empty => {},
             .letStatement => |ls| {
                 try writer.print("let {s} = ", .{ls.identifier.identifier});
                 try ls.expression.format("{s}", options, writer);
@@ -74,7 +97,7 @@ pub const Statement = union(enum) {
             },
             .expressionStatement => |es| {
                 try es.expression.format("{s}", options, writer);
-                try writer.writeAll(";");
+                // try writer.writeAll(";");
             },
         }
     }

@@ -12,27 +12,58 @@ pub const Program = struct {
         return .{ .statements = .{}, .arena = std.heap.ArenaAllocator.init(allocator) };
     }
 
-    pub fn string(self: *Self) ![]u8 {
-        var writer = std.mem.BufferWriter.init(self.allocator);
-        try writer.print("Program {\n");
-        try writer.print("  statements: ");
-        try writer.print("{");
-        try writer.print("\n");
-        for (self.statements) |stmt| {
-            try writer.print("    ");
-            try writer.print("{");
-            try writer.print("\n");
-            try writer.print("      ");
-            try writer.print(stmt.string());
-            try writer.print("\n");
-            try writer.print("    ");
-            try writer.print("}");
-            try writer.print("\n");
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        // try writer.print("{s}", .{self.string()});
+
+        // try writer.print("Program {{\n", .{});
+        // try writer.print("  statements: ", .{});
+        // try writer.print("{{", .{});
+        // try writer.print("\n", .{});
+        for (self.statements.items) |stmt| {
+            // try writer.print("    ", .{});
+            // try writer.print("{{", .{});
+            // try writer.print("\n", .{});
+            // try writer.print("      ", .{});
+            try writer.print("{s}", .{stmt});
+            // try writer.print("\n", .{});
+            // try writer.print("    ", .{});
+            // try writer.print("}}", .{});
+            // try writer.print("\n", .{});
         }
-        try writer.print("  ");
-        try writer.print("}");
-        try writer.print("\n");
-        try writer.print("}");
-        return writer.toOwnedSlice();
+        // try writer.print("  ", .{});
+        // try writer.print("}}", .{});
+        // try writer.print("\n", .{});
+        // try writer.print("}}", .{});
     }
+
+    // pub fn string(self: Self) ![]u8 {
+    //     var writer = std.mem.BufferWriter.init(self.allocator);
+    //     try writer.print("Program {\n");
+    //     try writer.print("  statements: ");
+    //     try writer.print("{");
+    //     try writer.print("\n");
+    //     for (self.statements) |stmt| {
+    //         try writer.print("    ");
+    //         try writer.print("{");
+    //         try writer.print("\n");
+    //         try writer.print("      ");
+    //         try writer.print(stmt.string());
+    //         try writer.print("\n");
+    //         try writer.print("    ");
+    //         try writer.print("}");
+    //         try writer.print("\n");
+    //     }
+    //     try writer.print("  ");
+    //     try writer.print("}");
+    //     try writer.print("\n");
+    //     try writer.print("}");
+    //     return writer.toOwnedSlice();
+    // }
 };

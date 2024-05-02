@@ -3,6 +3,6 @@
 *.log
 tmp/
 
-.direnv
+.direnv/
 zig-out/
 zig-cache/
