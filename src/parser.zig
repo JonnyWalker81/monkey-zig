@@ -655,6 +655,8 @@ test "test operator precedence parsing" {
 
         const actual = try std.fmt.allocPrint(test_allocator, "{s}", .{prog});
         defer test_allocator.free(actual);
+        // std.log.warn("{s}", .{tt.expected});
+        // std.log.warn("{s}", .{actual});
         assert(std.mem.eql(u8, actual, tt.expected));
     }
 }
