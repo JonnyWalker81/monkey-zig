@@ -1,6 +1,15 @@
 const std = @import("std");
 const token = @import("token.zig");
+const program = @import("program.zig");
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+pub const Node = union(enum) {
+    const Self = @This();
+
+    statement: *Statement,
+    expression: *Expression,
+    program: *program.Program,
+};
 
 pub const Expression = union(enum) {
     const Self = @This();
@@ -22,6 +31,14 @@ pub const Expression = union(enum) {
         condition: *Expression,
         consequence: *BlockStatement,
         alternative: ?*BlockStatement,
+    },
+    functionLiteral: struct {
+        parameters: ArrayListUnmanaged(*Identifier),
+        body: *BlockStatement,
+    },
+    callExpression: struct {
+        function: *Expression,
+        arguments: ArrayListUnmanaged(*Expression),
     },
 
     pub fn format(
@@ -60,39 +77,60 @@ pub const Expression = union(enum) {
                 try writer.print("{}", .{boolean});
             },
             .ifExpression => |ifExpr| {
-                // try writer.print("if (", .{});
-                // try ifExpr.condition.*.format("{s}", options, writer);
-                // try writer.print(") ", .{});
-                // try ifExpr.consequence.format("{s}", options, writer);
+                try writer.print("if (", .{});
+                try writer.print("{s}", .{ifExpr.condition});
+                try writer.print(") ", .{});
+                try writer.print("{s}", .{ifExpr.consequence});
                 if (ifExpr.alternative) |alternative| {
-                    try writer.print(" else ", .{});
+                    try writer.print("else ", .{});
                     try writer.print("{s}", .{alternative});
                 }
+            },
+            .functionLiteral => |fnLit| {
+                try writer.print("fn(", .{});
+                for (fnLit.parameters.items) |param| {
+                    try writer.print("{s}", .{param.identifier});
+                }
+                try writer.print(") ", .{});
+                try writer.print("{s}", .{fnLit.body});
+            },
+            .callExpression => |call| {
+                try writer.print("{s}(", .{call.function});
+                for (call.arguments.items, 0..) |arg, i| {
+                    if (i > 0) {
+                        try writer.print(", ", .{});
+                    }
+                    try writer.print("{s}", .{arg});
+                }
+                try writer.print(")", .{});
             },
         }
     }
 };
 
-// pub const LetStatement = struct {
-//     identifier: Identifier,
-//     expression: Expression,
-// };
-
 pub const Statement = union(enum) {
     const Self = @This();
 
-    empty: void,
+    empty,
 
     letStatement: struct {
         identifier: Identifier,
-        expression: Expression,
+        expression: *Expression,
     },
     returnStatement: struct {
-        expression: Expression,
+        expression: *Expression,
     },
     expressionStatement: struct {
         expression: *Expression,
     },
+
+    pub fn init(allocator: std.mem.Allocator) *Statement {
+        var statement = allocator.create(Statement) catch {
+            std.debug.panic("Failed to allocate Statement", .{});
+        };
+
+        return statement;
+    }
 
     pub fn format(
         self: Self,
@@ -117,7 +155,6 @@ pub const Statement = union(enum) {
             },
             .expressionStatement => |es| {
                 try writer.print("{s}", .{es.expression});
-                // try writer.writeAll(";");
             },
         }
     }
@@ -127,6 +164,15 @@ pub const BlockStatement = struct {
     const Self = @This();
 
     statements: ArrayListUnmanaged(*Statement),
+
+    pub fn init(allocator: std.mem.Allocator) *BlockStatement {
+        var block = allocator.create(BlockStatement) catch {
+            std.debug.panic("Failed to allocate BlockStatement", .{});
+        };
+
+        block.statements = .{};
+        return block;
+    }
 
     pub fn format(
         self: Self,

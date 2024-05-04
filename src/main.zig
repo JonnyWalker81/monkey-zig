@@ -1,6 +1,21 @@
 const std = @import("std");
 const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
+const evaluator = @import("evaluator.zig");
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
+
+// monkey face in zig multi-line string constant
+const monkeyFace =
+    \\.
+    \\          __
+    \\     w  c(oo)o   (
+    \\      \__(-)    __)
+    \\          /\   (
+    \\         /(_)___)
+    \\        w  /|
+    \\        |  |
+    \\        m  m
+;
 
 const prompt: []const u8 = ">> ";
 
@@ -12,6 +27,8 @@ fn start() !void {
     const in = std.io.getStdIn();
     var buf = std.io.bufferedReader(in.reader());
     var r = buf.reader();
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     while (true) {
         try stdout.print("{s}", .{prompt});
         try bw.flush();
@@ -22,13 +39,35 @@ fn start() !void {
         if (line) |input| {
             var l = lexer.Lexer.init(input);
 
-            _ = parser.Parser.init(l);
-            var tok = l.nextToken();
-            while (tok != .eof) {
-                try stdout.print("{any}\n", .{tok});
-                tok = l.nextToken();
+            var p = parser.Parser.init(l, gpa.allocator());
+            defer p.deinit();
+
+            var program = p.parseProgram();
+
+            if (p.errors.items.len > 0) {
+                printParserErrors(p.errors);
+                continue;
+            }
+
+            var node = .{ .program = &program };
+
+            var e = evaluator.Evaluator.init(gpa.allocator());
+            var evaluated = e.eval(node);
+
+            if (evaluated) |result| {
+                try stdout.print("{s}\n", .{result});
             }
         }
+    }
+    defer gpa.deinit();
+}
+
+fn printParserErrors(errors: ArrayListUnmanaged([]u8)) void {
+    std.debug.print("{s}\n", .{monkeyFace});
+    std.debug.print("Woops! We ran into some monkey business here!\n", .{});
+    std.debug.print(" parser errors:\n", .{});
+    for (errors.items) |err| {
+        std.debug.print("\t{s}\n", .{err});
     }
 }
 

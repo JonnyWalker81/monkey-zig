@@ -81,6 +81,16 @@ pub const Parser = struct {
             std.debug.panic("failed to register prefix", .{});
         };
 
+        var ifToken: token.Token = .if_token;
+        p.registerPrefix(ifToken.id(), parseIfExpression) catch {
+            std.debug.panic("failed to register prefix", .{});
+        };
+
+        var functionToken: token.Token = .function;
+        p.registerPrefix(functionToken.id(), parseFunctionLiteral) catch {
+            std.debug.panic("failed to register prefix", .{});
+        };
+
         var plusToken: token.Token = .plus;
         p.registerInfix(plusToken.id(), parseInfixExpression) catch {
             std.debug.panic("failed to register prefix", .{});
@@ -120,9 +130,17 @@ pub const Parser = struct {
             std.debug.panic("failed to register prefix", .{});
         };
 
+        p.registerInfix(lparenToken.id(), parseCallExpression) catch {
+            std.debug.panic("failed to register prefix", .{});
+        };
+
         p.nextToken();
         p.nextToken();
         return p;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
     }
 
     fn registerPrefix(self: *Self, id: usize, f: prefixParserFn) !void {
@@ -319,6 +337,128 @@ pub const Parser = struct {
         return ee;
     }
 
+    fn parseIfExpression(self: *Self) *ast.Expression {
+        var exp = self.arena.allocator().create(ast.Expression) catch {
+            std.debug.panic("failed to create expression", .{});
+        };
+
+        if (!self.expectPeek(.lparen)) {
+            return exp;
+        }
+
+        self.nextToken();
+        var condition = self.parseExpression(.lowest) orelse {
+            return exp;
+        };
+
+        if (!self.expectPeek(.rparen)) {
+            return exp;
+        }
+
+        if (!self.expectPeek(.lbrace)) {
+            return exp;
+        }
+
+        var consequence = self.parseBlockStatement();
+
+        exp.* = .{ .ifExpression = .{ .condition = condition, .consequence = consequence, .alternative = null } };
+        if (self.peekTokenIs(.else_token)) {
+            self.nextToken();
+
+            if (!self.expectPeek(.lbrace)) {
+                return exp;
+            }
+
+            exp.*.ifExpression.alternative = self.parseBlockStatement();
+        }
+
+        return exp;
+    }
+
+    fn parseBlockStatement(self: *Self) *ast.BlockStatement {
+        var block = ast.BlockStatement.init(self.arena.allocator());
+
+        self.nextToken();
+
+        while (!self.curTokenIs(.rbrace) and !self.curTokenIs(.eof)) {
+            const stmt = self.parseStatement();
+            block.statements.append(self.arena.allocator(), stmt) catch {
+                std.debug.panic("failed to append statement", .{});
+            };
+            self.nextToken();
+        }
+
+        return block;
+    }
+
+    fn parseFunctionLiteral(self: *Self) *ast.Expression {
+        var exp = self.arena.allocator().create(ast.Expression) catch {
+            std.debug.panic("failed to create expression", .{});
+        };
+
+        if (!self.expectPeek(.lparen)) {
+            return exp;
+        }
+
+        var parameters = self.parseFunctionParameters();
+        if (!self.expectPeek(.lbrace)) {
+            return exp;
+        }
+
+        var body = self.parseBlockStatement();
+
+        exp.* = .{ .functionLiteral = .{ .parameters = parameters, .body = body } };
+
+        return exp;
+    }
+
+    fn parseCallExpression(self: *Self, function: *ast.Expression) *ast.Expression {
+        var exp = self.arena.allocator().create(ast.Expression) catch {
+            std.debug.panic("failed to create expression", .{});
+        };
+
+        const arguments = self.parseCallArguments();
+
+        exp.* = .{ .callExpression = .{ .function = function, .arguments = arguments } };
+
+        return exp;
+    }
+
+    fn parseCallArguments(self: *Self) ArrayListUnmanaged(*ast.Expression) {
+        var args: ArrayListUnmanaged(*ast.Expression) = .{};
+
+        if (self.peekTokenIs(.rparen)) {
+            self.nextToken();
+            return args;
+        }
+
+        self.nextToken();
+        var arg = self.parseExpression(.lowest) orelse {
+            return args;
+        };
+
+        args.append(self.arena.allocator(), arg) catch {
+            std.debug.panic("failed to append argument", .{});
+        };
+
+        while (self.peekTokenIs(.comma)) {
+            self.nextToken();
+            self.nextToken();
+            var a = self.parseExpression(.lowest) orelse {
+                return args;
+            };
+            args.append(self.arena.allocator(), a) catch {
+                std.debug.panic("failed to append argument", .{});
+            };
+        }
+
+        if (!self.expectPeek(.rparen)) {
+            return args;
+        }
+
+        return args;
+    }
+
     fn parseLetStatement(self: *Self) *ast.Statement {
         var stmt = self.arena.allocator().create(ast.Statement) catch {
             std.debug.panic("failed to create statement", .{});
@@ -332,16 +472,59 @@ pub const Parser = struct {
         const ident = ast.Identifier.init(name);
 
         if (!self.expectPeek(.assign)) {
+            return stmt;
+        }
+
+        self.nextToken();
+
+        const value = self.parseExpression(.lowest) orelse {
+            return stmt;
+        };
+
+        if (self.peekTokenIs(.semicolon)) {
             self.nextToken();
         }
 
-        while (!self.curTokenIs(.semicolon)) {
-            self.nextToken();
-        }
-
-        stmt.* = .{ .letStatement = .{ .identifier = ident, .expression = .{ .identifier = ident } } };
+        stmt.* = .{ .letStatement = .{ .identifier = ident, .expression = value } };
 
         return stmt;
+    }
+
+    fn parseFunctionParameters(self: *Self) ArrayListUnmanaged(*ast.Identifier) {
+        var identifiers: ArrayListUnmanaged(*ast.Identifier) = .{};
+        if (self.peekTokenIs(.rparen)) {
+            self.nextToken();
+            return identifiers;
+        }
+
+        self.nextToken();
+
+        var ident = self.arena.allocator().create(ast.Identifier) catch {
+            std.debug.panic("failed to create identifier", .{});
+        };
+        ident.* = .{ .identifier = parseIdentifier(self.curToken) };
+        identifiers.append(self.arena.allocator(), ident) catch {
+            std.debug.panic("failed to append identifier", .{});
+        };
+
+        while (self.peekTokenIs(.comma)) {
+            self.nextToken();
+            self.nextToken();
+
+            var i = self.arena.allocator().create(ast.Identifier) catch {
+                std.debug.panic("failed to create identifier", .{});
+            };
+            i.* = .{ .identifier = parseIdentifier(self.curToken) };
+            identifiers.append(self.arena.allocator(), i) catch {
+                std.debug.panic("failed to append identifier", .{});
+            };
+        }
+
+        if (!self.expectPeek(.rparen)) {
+            return identifiers;
+        }
+
+        return identifiers;
     }
 
     fn parseReturnStatement(self: *Self) *ast.Statement {
@@ -350,10 +533,16 @@ pub const Parser = struct {
         };
 
         self.nextToken();
-        while (!self.curTokenIs(.semicolon)) {
+
+        const ret = self.parseExpression(.lowest) orelse {
+            return stmt;
+        };
+
+        if (self.peekTokenIs(.semicolon)) {
             self.nextToken();
         }
-        stmt.* = .{ .returnStatement = .{ .expression = .{ .identifier = ast.Identifier.init("return") } } };
+
+        stmt.* = .{ .returnStatement = .{ .expression = ret } };
         return stmt;
     }
 
@@ -437,35 +626,49 @@ fn checkParserErrors(errors: []const []const u8) void {
 
 const assert = std.debug.assert;
 const test_allocator = std.testing.allocator;
+const val = union(enum) {
+    integer: i64,
+    boolean: bool,
+    str: []const u8,
+};
+
 test "test let statement" {
-    const input =
-        \\let x = 5;
-        \\let y =  10;
-        \\let foobar = 838383;
-    ;
-
-    const l = lexer.Lexer.init(input);
-    var p = Parser.init(l, test_allocator);
-    defer p.arena.deinit();
-
-    var prog = p.parseProgram();
-    checkParserErrors(p.getErrors());
-
-    assert(prog.statements.items.len == 3);
+    // const input =
+    //     \\let x = 5;
+    //     \\let y =  10;
+    //     \\let foobar = 838383;
+    // ;
 
     const tests = [_]struct {
-        expected: []const u8,
+        input: []const u8,
+        expectedIdentifier: []const u8,
+        expected: val,
     }{
-        .{ .expected = "x" },
-        .{ .expected = "y" },
-        .{ .expected = "foobar" },
+        .{ .input = "let x = 5;", .expectedIdentifier = "x", .expected = .{ .integer = 5 } },
+        .{ .input = "let y = true;", .expectedIdentifier = "y", .expected = .{ .boolean = true } },
+        .{ .input = "let foobar = y;", .expectedIdentifier = "foobar", .expected = .{ .str = "y" } },
     };
 
-    for (prog.statements.items, 0..) |stmt, i| {
-        const tt = tests[i];
+    for (tests) |tt| {
+        const l = lexer.Lexer.init(tt.input);
+        var p = Parser.init(l, test_allocator);
+        defer p.deinit();
+
+        var prog = p.parseProgram();
+        checkParserErrors(p.getErrors());
+
+        // std.log.warn("{d}", .{prog.statements.items.len});
+        assert(prog.statements.items.len == 1);
+
+        const stmt = prog.statements.items[0];
+        // std.log.warn("{s}", .{tt.input});
         // std.log.warn("{s}", .{stmt});
         assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.letStatement)));
-        assert(std.mem.eql(u8, stmt.letStatement.identifier.identifier, tt.expected));
+        switch (tt.expected) {
+            .integer => |i| assert(stmt.letStatement.expression.integer == i),
+            .boolean => |b| assert(stmt.letStatement.expression.boolean == b),
+            .str => |s| assert(std.mem.eql(u8, stmt.letStatement.expression.identifier.identifier, s)),
+        }
     }
 }
 
@@ -478,7 +681,7 @@ test "test return statement" {
 
     var l = lexer.Lexer.init(input);
     var p = Parser.init(l, test_allocator);
-    defer p.arena.deinit();
+    defer p.deinit();
 
     var prog = p.parseProgram();
     checkParserErrors(p.getErrors());
@@ -495,7 +698,7 @@ test "test identifier experssion" {
 
     var l = lexer.Lexer.init(input);
     var p = Parser.init(l, test_allocator);
-    defer p.arena.deinit();
+    defer p.deinit();
 
     var prog = p.parseProgram();
     checkParserErrors(p.getErrors());
@@ -514,7 +717,7 @@ test "test integer literal experssion" {
 
     var l = lexer.Lexer.init(input);
     var p = Parser.init(l, test_allocator);
-    defer p.arena.deinit();
+    defer p.deinit();
 
     var prog = p.parseProgram();
     checkParserErrors(p.getErrors());
@@ -526,11 +729,6 @@ test "test integer literal experssion" {
     assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
     assert(stmt.expressionStatement.expression.integer == 5);
 }
-
-const val = union(enum) {
-    integer: i64,
-    boolean: bool,
-};
 
 test "test parsing prefix expressions" {
     const prefixTests = [_]struct {
@@ -547,7 +745,7 @@ test "test parsing prefix expressions" {
     for (prefixTests) |tt| {
         var l = lexer.Lexer.init(tt.input);
         var p = Parser.init(l, test_allocator);
-        defer p.arena.deinit();
+        defer p.deinit();
 
         var prog = p.parseProgram();
         checkParserErrors(p.getErrors());
@@ -564,6 +762,7 @@ test "test parsing prefix expressions" {
         switch (tt.integerValue) {
             .integer => |i| assert(r.integer == i),
             .boolean => |b| assert(r.boolean == b),
+            .str => |_| assert(false),
         }
     }
 }
@@ -591,7 +790,7 @@ test "test parsing infix expressions" {
     for (infixTests) |tt| {
         var l = lexer.Lexer.init(tt.input);
         var p = Parser.init(l, test_allocator);
-        defer p.arena.deinit();
+        defer p.deinit();
 
         var prog = p.parseProgram();
         checkParserErrors(p.getErrors());
@@ -608,11 +807,13 @@ test "test parsing infix expressions" {
         switch (tt.leftValue) {
             .integer => |i| assert(stmt.expressionStatement.expression.infix.left.integer == i),
             .boolean => |b| assert(stmt.expressionStatement.expression.infix.left.boolean == b),
+            .str => |_| assert(false),
         }
 
         switch (tt.rightValue) {
             .integer => |i| assert(stmt.expressionStatement.expression.infix.right.integer == i),
             .boolean => |b| assert(stmt.expressionStatement.expression.infix.right.boolean == b),
+            .str => |_| assert(false),
         }
     }
 }
@@ -643,12 +844,15 @@ test "test operator precedence parsing" {
         .{ .input = "2 / (5 + 5);", .expected = "(2 / (5 + 5))" },
         .{ .input = "-(5 + 5);", .expected = "(-(5 + 5))" },
         .{ .input = "!(true == true);", .expected = "(!(true == true))" },
+        .{ .input = "a + add(b * c) + d;", .expected = "((a + add((b * c))) + d)" },
+        .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8));", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))" },
+        .{ .input = "add(a + b + c * d / f + g);", .expected = "add((((a + b) + ((c * d) / f)) + g))" },
     };
 
     for (tests) |tt| {
         var l = lexer.Lexer.init(tt.input);
         var p = Parser.init(l, test_allocator);
-        defer p.arena.deinit();
+        defer p.deinit();
 
         var prog = p.parseProgram();
         checkParserErrors(p.getErrors());
@@ -680,7 +884,7 @@ test "test boolean expression" {
     for (tests) |tt| {
         var l = lexer.Lexer.init(tt.input);
         var p = Parser.init(l, test_allocator);
-        defer p.arena.deinit();
+        defer p.deinit();
 
         var prog = p.parseProgram();
         checkParserErrors(p.getErrors());
@@ -693,4 +897,129 @@ test "test boolean expression" {
         assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.boolean)));
         assert(stmt.expressionStatement.expression.boolean == tt.expected);
     }
+}
+
+test "test if expression" {
+    const input = "if (x < y) { x }";
+
+    var l = lexer.Lexer.init(input);
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    // std.log.warn("left: {s}", .{stmt.expressionStatement.expression.ifExpression.condition.infix.left.identifier.identifier);
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.ifExpression)));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.ifExpression.condition.infix.left.identifier.identifier, "x"));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.ifExpression.condition.infix.operator, "<"));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.ifExpression.condition.infix.right.identifier.identifier, "y"));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.ifExpression.consequence.statements.items[0].expressionStatement.expression.identifier.identifier, "x"));
+}
+
+test "test function literal parsing" {
+    const input = "fn(x, y) { x + y; }";
+
+    var l = lexer.Lexer.init(input);
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.functionLiteral)));
+    assert(stmt.expressionStatement.expression.functionLiteral.parameters.items.len == 2);
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.functionLiteral.parameters.items[0].identifier, "x"));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.functionLiteral.parameters.items[1].identifier, "y"));
+    assert(stmt.expressionStatement.expression.functionLiteral.body.statements.items.len == 1);
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.functionLiteral.body.statements.items[0].expressionStatement.expression.infix.left.identifier.identifier, "x"));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.functionLiteral.body.statements.items[0].expressionStatement.expression.infix.operator, "+"));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.functionLiteral.body.statements.items[0].expressionStatement.expression.infix.right.identifier.identifier, "y"));
+}
+
+fn initArray(comptime T: anytype, comptime items: []const T) !ArrayListUnmanaged(T) {
+    var list: ArrayListUnmanaged(T) = .{};
+
+    // Since we're using std.meta.Any, handle potential memory allocation failures
+    inline for (items) |item| {
+        try list.append(test_allocator, item);
+    }
+
+    return list;
+}
+
+test "test function parameter parsing" {
+    var tests = [_]struct {
+        input: []const u8,
+        expected: ArrayListUnmanaged([]const u8),
+        // expected: [][]const u8,
+    }{
+        // .{ .input = "fn() {};", .expected = [_][]const u8{""} },
+        // .{ .input = "fn(x) {};", .expected = [_][]const u8{"x"} },
+        // .{ .input = "fn(x, y, z) {};", .expected = [_][]const u8{ "x", "y", "z" } },
+        .{ .input = "fn() {};", .expected = try initArray([]const u8, &[_][]const u8{}) },
+        .{ .input = "fn(x) {};", .expected = try initArray([]const u8, &[_][]const u8{"x"}) },
+        .{ .input = "fn(x, y, z) {};", .expected = try initArray([]const u8, &[_][]const u8{ "x", "y", "z" }) },
+    };
+
+    for (tests) |tt| {
+        var l = lexer.Lexer.init(tt.input);
+        var p = Parser.init(l, test_allocator);
+        defer p.deinit();
+
+        var prog = p.parseProgram();
+        checkParserErrors(p.getErrors());
+
+        const stmt = prog.statements.items[0];
+        // std.log.warn("{s}", .{stmt});
+        assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+        assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.functionLiteral)));
+        assert(stmt.expressionStatement.expression.functionLiteral.parameters.items.len == tt.expected.items.len);
+        for (stmt.expressionStatement.expression.functionLiteral.parameters.items, tt.expected.items) |param, expected| {
+            assert(std.mem.eql(u8, param.identifier, expected));
+        }
+    }
+
+    var i: usize = 0;
+    while (i < tests.len) {
+        tests[i].expected.deinit(test_allocator);
+        i += 1;
+    }
+}
+
+test "test call experssion parsing" {
+    const input = "add(1, 2 * 3, 4 + 5);";
+
+    var l = lexer.Lexer.init(input);
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.callExpression)));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.callExpression.function.identifier.identifier, "add"));
+    assert(stmt.expressionStatement.expression.callExpression.arguments.items.len == 3);
+    assert(stmt.expressionStatement.expression.callExpression.arguments.items[0].integer == 1);
+    assert(stmt.expressionStatement.expression.callExpression.arguments.items[1].infix.left.integer == 2);
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.callExpression.arguments.items[1].infix.operator, "*"));
+    assert(stmt.expressionStatement.expression.callExpression.arguments.items[1].infix.right.integer == 3);
+    assert(stmt.expressionStatement.expression.callExpression.arguments.items[2].infix.left.integer == 4);
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.callExpression.arguments.items[2].infix.operator, "+"));
+    assert(stmt.expressionStatement.expression.callExpression.arguments.items[2].infix.right.integer == 5);
 }
