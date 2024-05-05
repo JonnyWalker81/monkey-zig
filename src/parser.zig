@@ -543,6 +543,7 @@ pub const Parser = struct {
         }
 
         stmt.* = .{ .returnStatement = .{ .expression = ret } };
+
         return stmt;
     }
 

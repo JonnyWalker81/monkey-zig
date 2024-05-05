@@ -123,6 +123,7 @@ pub const Statement = union(enum) {
     expressionStatement: struct {
         expression: *Expression,
     },
+    blockStatement: *BlockStatement,
 
     pub fn init(allocator: std.mem.Allocator) *Statement {
         var statement = allocator.create(Statement) catch {
@@ -155,6 +156,9 @@ pub const Statement = union(enum) {
             },
             .expressionStatement => |es| {
                 try writer.print("{s}", .{es.expression});
+            },
+            .blockStatement => |bs| {
+                try writer.print("{s}", .{bs});
             },
         }
     }
