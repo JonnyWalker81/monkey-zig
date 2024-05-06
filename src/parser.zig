@@ -503,6 +503,7 @@ pub const Parser = struct {
             std.debug.panic("failed to create identifier", .{});
         };
         ident.* = .{ .identifier = parseIdentifier(self.curToken) };
+        std.log.warn("identifier: {s}", .{ident.identifier});
         identifiers.append(self.arena.allocator(), ident) catch {
             std.debug.panic("failed to append identifier", .{});
         };

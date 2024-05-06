@@ -4,6 +4,8 @@ const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const program = @import("program.zig");
 const ast = @import("ast.zig");
+const environment = @import("environment.zig");
+const ArrayListUnmanaged = std.ArrayListUnmanaged;
 
 // var NULL = .nil;
 var TRUE = object.Object{ .boolean = true };
@@ -22,35 +24,36 @@ pub const Evaluator = struct {
         self.arena.deinit();
     }
 
-    pub fn eval(self: *Self, node: ast.Node) ?*object.Object {
-        // std.log.warn("here...", .{});
+    pub fn eval(self: *Self, node: ast.Node, env: *environment.Environment) ?*object.Object {
         switch (node) {
             .program => |p| {
                 // std.log.warn("evaluating program...", .{});
-                return self.eval_program(p);
+                return self.eval_program(p, env);
             },
             .expression => |es| {
-                return self.eval_expression(es);
+                return self.eval_expression(es, env);
             },
             .statement => |s| {
-                return self.eval_statement(s);
+                return self.eval_statement(s, env);
             },
         }
     }
 
-    fn eval_program(self: *Self, prog: *program.Program) ?*object.Object {
-        var result = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    fn eval_program(self: *Self, prog: *program.Program, env: *environment.Environment) ?*object.Object {
+        var result: ?*object.Object = undefined;
         for (prog.statements.items) |stmt| {
-            result = self.eval_statement(stmt) orelse return null;
+            result = self.eval_statement(stmt, env);
 
-            switch (result.*) {
-                .returnValue => |rv| {
-                    return rv;
-                },
-                .err => |_| {
-                    return result;
-                },
-                else => {},
+            if (result) |r| {
+                switch (r.*) {
+                    .returnValue => |rv| {
+                        return rv;
+                    },
+                    .err => |_| {
+                        return result;
+                    },
+                    else => {},
+                }
             }
         }
         return result;
@@ -60,42 +63,55 @@ pub const Evaluator = struct {
     //     return self.eval_statement(statement);
     // }
 
-    pub fn eval_statement(self: *Self, statement: *ast.Statement) ?*object.Object {
+    pub fn eval_statement(self: *Self, statement: *ast.Statement, env: *environment.Environment) ?*object.Object {
         switch (statement.*) {
             .letStatement => |ls| {
-                // std.log.warn("let statement...", .{});
-                const value = self.eval_expression(ls.expression);
-                // ls.env.set(ls.name.value, value);
+                const value = self.eval_expression(ls.expression, env);
+                if (is_error(value)) {
+                    return value;
+                }
+                if (value) |v| {
+                    // std.log.warn("setting {s} to {s}", .{ ls.identifier.identifier, v });
+                    _ = env.set(ls.identifier.identifier, v);
+                }
                 return value;
             },
             .expressionStatement => |es| {
-                return self.eval_expression(es.expression);
+                return self.eval_expression(es.expression, env);
             },
             .blockStatement => |bs| {
                 var result = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 for (bs.statements.items) |stmt| {
-                    result = self.eval_statement(stmt) orelse return null;
+                    result = self.eval_statement(stmt, env) orelse return null;
                 }
                 return result;
             },
             .returnStatement => |rs| {
-                var result = self.eval_expression(rs.expression) orelse return null;
+                var result = self.eval_expression(rs.expression, env);
                 if (is_error(result)) {
                     return result;
                 }
                 var obj = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-                obj.* = .{ .returnValue = result };
+                obj.* = .{ .returnValue = result.? };
                 return obj;
             },
             else => {
+                std.log.warn("unknown statement...{any}", .{statement});
                 // var obj: *object.Object = self.allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 return null;
             },
         }
     }
 
-    pub fn eval_expression(self: *Self, expression: *ast.Expression) ?*object.Object {
+    pub fn eval_expression(self: *Self, expression: *ast.Expression, env: *environment.Environment) ?*object.Object {
         switch (expression.*) {
+            .identifier => |i| {
+                if (env.get(i.identifier)) |obj| {
+                    return obj;
+                } else {
+                    return self.new_error("identifier not found: {s}", .{i.identifier});
+                }
+            },
             .integer => |i| {
                 var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .integer = i };
@@ -107,7 +123,7 @@ pub const Evaluator = struct {
                 return obj;
             },
             .prefix => |p| {
-                var right = self.eval_expression(p.right);
+                var right = self.eval_expression(p.right, env);
                 if (is_error(right)) {
                     return right;
                 }
@@ -119,18 +135,24 @@ pub const Evaluator = struct {
                 }
             },
             .infix => |i| {
-                var left = self.eval_expression(i.left) orelse return null;
+                var left = self.eval_expression(i.left, env);
                 if (is_error(left)) {
                     return left;
                 }
-                var right = self.eval_expression(i.right) orelse return null;
+                var right = self.eval_expression(i.right, env);
                 if (is_error(right)) {
                     return right;
                 }
-                return self.eval_infix_expression(i.operator, left, right);
+                return self.eval_infix_expression(i.operator, left.?, right.?);
             },
             .ifExpression => |_| {
-                return self.eval_if_expression(expression);
+                return self.eval_if_expression(expression, env);
+            },
+            .functionLiteral => |fl| {
+                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                std.log.warn("functionLiteral: {any}\n", .{fl.parameters.items[0]});
+                obj.* = .{ .function = .{ .parameters = fl.parameters.clone(self.arena.allocator()) catch unreachable, .body = fl.body, .env = env } };
+                return obj;
             },
             else => {
                 return null;
@@ -138,18 +160,18 @@ pub const Evaluator = struct {
         }
     }
 
-    fn eval_if_expression(self: *Self, ie: *ast.Expression) ?*object.Object {
+    fn eval_if_expression(self: *Self, ie: *ast.Expression, env: *environment.Environment) ?*object.Object {
         return switch (ie.*) {
             .ifExpression => |ifExpr| {
-                var condition = self.eval_expression(ifExpr.condition) orelse return null;
+                var condition = self.eval_expression(ifExpr.condition, env);
                 if (is_error(condition)) {
                     return condition;
                 }
 
-                if (condition.boolValue()) {
-                    return self.eval_block_statement(ifExpr.consequence);
+                if (condition.?.boolValue()) {
+                    return self.eval_block_statement(ifExpr.consequence, env);
                 } else if (ifExpr.alternative) |alternative| {
-                    return self.eval_block_statement(alternative);
+                    return self.eval_block_statement(alternative, env);
                 } else {
                     var obj = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                     obj.* = .nil;
@@ -162,16 +184,18 @@ pub const Evaluator = struct {
         };
     }
 
-    fn eval_block_statement(self: *Self, bs: *ast.BlockStatement) ?*object.Object {
-        var result = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    fn eval_block_statement(self: *Self, bs: *ast.BlockStatement, env: *environment.Environment) ?*object.Object {
+        var result: ?*object.Object = undefined;
         for (bs.statements.items) |stmt| {
-            result = self.eval_statement(stmt) orelse return null;
+            result = self.eval_statement(stmt, env);
 
-            switch (result.*) {
-                .returnValue, .err => {
-                    return result;
-                },
-                else => {},
+            if (result) |r| {
+                switch (r.*) {
+                    .returnValue, .err => {
+                        return result;
+                    },
+                    else => {},
+                }
             }
         }
         return result;
@@ -307,7 +331,9 @@ fn test_eval(evaluator: *Evaluator, input: []const u8) *object.Object {
     var node = .{ .program = &prog };
     // std.log.warn("node: {any}\n", .{node});
     // std.log.warn("evaluator: {any}\n", .{evaluator});
-    return evaluator.eval(node) orelse std.debug.panic("failed to evaluate", .{});
+    var env = environment.Environment.init(test_allocator);
+    defer env.deinit();
+    return evaluator.eval(node, &env) orelse std.debug.panic("failed to evaluate", .{});
 }
 
 fn test_integer_object(obj: *object.Object, expected: i64) void {
@@ -491,6 +517,7 @@ test "test error handling" {
         .{ .input = "5; true + false; 5", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "if (10 > 1) { true + false; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
+        .{ .input = "foobar", .expected = "identifier not found: foobar" },
     };
 
     for (tests) |t| {
@@ -508,5 +535,47 @@ test "test error handling" {
                 std.debug.panic("no error object returned", .{});
             },
         }
+    }
+}
+
+test "test let statement" {
+    const tests = [_]struct {
+        input: []const u8,
+        expected: i64,
+    }{
+        .{ .input = "let a = 5; a;", .expected = 5 },
+        .{ .input = "let a = 5 * 5; a;", .expected = 25 },
+        .{ .input = "let a = 5; let b = a; b;", .expected = 5 },
+        .{ .input = "let a = 5; let b = a; let c = a + b + 5; c;", .expected = 15 },
+    };
+
+    for (tests) |t| {
+        var evaluator = Evaluator.init(test_allocator);
+        const o = test_eval(&evaluator, t.input);
+        defer evaluator.deinit();
+        test_integer_object(o, t.expected);
+    }
+}
+
+test "test function object" {
+    const input = "fn(x) { x + 2; }";
+    var evaluator = Evaluator.init(test_allocator);
+    defer evaluator.deinit();
+    const o = test_eval(&evaluator, input);
+    // std.log.warn("o: {s}\n", .{o});
+    switch (o.*) {
+        .function => |f| {
+            assert(f.parameters.items.len == 1);
+            const param = f.parameters.items[0];
+            std.log.warn("f.parameters.items[0].identifier: {any}\n", .{param});
+            // std.log.warn("f.parameters.items[0].identifier: {any}\n", .{f.parameters.items});
+            assert(std.mem.eql(u8, param.identifier, "x"));
+            // _ = std.fmt.allocPrint(test_allocator, "{s}", .{f.body}) catch unreachable;
+            // std.log.warn("body: {s}\n", .{body});
+            // assert(std.mem.eql(u8, body, "(x + 2)"));
+        },
+        else => {
+            std.debug.panic("object is not Function. got={s}", .{o});
+        },
     }
 }

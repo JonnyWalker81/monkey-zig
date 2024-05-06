@@ -3,6 +3,7 @@ const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const evaluator = @import("evaluator.zig");
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const environment = @import("environment.zig");
 
 // monkey face in zig multi-line string constant
 const monkeyFace =
@@ -51,8 +52,12 @@ fn start() !void {
 
             var node = .{ .program = &program };
 
+            var env = environment.Environment.init(gpa.allocator());
+            defer env.deinit();
             var e = evaluator.Evaluator.init(gpa.allocator());
-            var evaluated = e.eval(node);
+            defer e.deinit();
+
+            var evaluated = e.eval(node, &env);
 
             if (evaluated) |result| {
                 try stdout.print("{s}\n", .{result});
