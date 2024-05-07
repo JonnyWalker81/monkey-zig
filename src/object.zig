@@ -1,7 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const environment = @import("environment.zig");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 
 pub const Object = union(enum) {
     const Self = @This();
@@ -12,7 +12,7 @@ pub const Object = union(enum) {
     boolean: bool,
     returnValue: *Self,
     function: struct {
-        parameters: ArrayListUnmanaged(*ast.Identifier),
+        parameters: ArrayList(*ast.Identifier),
         body: *ast.BlockStatement,
         env: *environment.Environment,
     },
@@ -93,9 +93,9 @@ pub const Object = union(enum) {
                         try writer.print(", ", .{});
                     }
                 }
-                try writer.print(") ", .{});
+                try writer.print("){{ ", .{});
                 try writer.print("{s}", .{f.body});
-                try writer.print("\n}}", .{});
+                try writer.print("}}", .{});
             },
             .err => |e| {
                 try writer.print("{s}", .{e});

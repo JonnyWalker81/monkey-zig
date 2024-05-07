@@ -1,15 +1,15 @@
 const std = @import("std");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 const statement = @import("ast.zig");
 
 pub const Program = struct {
     const Self = @This();
 
-    statements: ArrayListUnmanaged(*statement.Statement),
+    statements: ArrayList(*statement.Statement),
     arena: std.heap.ArenaAllocator,
 
     pub fn init(allocator: std.mem.Allocator) Program {
-        return .{ .statements = .{}, .arena = std.heap.ArenaAllocator.init(allocator) };
+        return .{ .statements = ArrayList(*statement.Statement).init(allocator), .arena = std.heap.ArenaAllocator.init(allocator) };
     }
 
     pub fn format(

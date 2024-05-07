@@ -2,7 +2,7 @@ const std = @import("std");
 const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const evaluator = @import("evaluator.zig");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 const environment = @import("environment.zig");
 
 // monkey face in zig multi-line string constant
@@ -30,7 +30,15 @@ fn start() !void {
     var r = buf.reader();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var env = environment.Environment.init(gpa.allocator());
+    defer env.deinit();
+
     while (true) {
+        // defer _ = gpa.deinit();
+
+        var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+        defer arena.deinit();
+
         try stdout.print("{s}", .{prompt});
         try bw.flush();
 
@@ -52,22 +60,19 @@ fn start() !void {
 
             var node = .{ .program = &program };
 
-            var env = environment.Environment.init(gpa.allocator());
-            defer env.deinit();
             var e = evaluator.Evaluator.init(gpa.allocator());
             defer e.deinit();
 
-            var evaluated = e.eval(node, &env);
+            var evaluated = e.eval(node, env);
 
             if (evaluated) |result| {
                 try stdout.print("{s}\n", .{result});
             }
         }
     }
-    defer gpa.deinit();
 }
 
-fn printParserErrors(errors: ArrayListUnmanaged([]u8)) void {
+fn printParserErrors(errors: ArrayList([]u8)) void {
     std.debug.print("{s}\n", .{monkeyFace});
     std.debug.print("Woops! We ran into some monkey business here!\n", .{});
     std.debug.print(" parser errors:\n", .{});

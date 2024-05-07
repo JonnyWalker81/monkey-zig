@@ -1,6 +1,6 @@
 const std = @import("std");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
-const AutoHashMapUnmanaged = std.AutoHashMapUnmanaged;
+const ArrayList = std.ArrayList;
+const AutoHashMap = std.AutoHashMap;
 const lexer = @import("lexer.zig");
 const token = @import("token.zig");
 const program = @import("program.zig");
@@ -30,9 +30,9 @@ pub const Parser = struct {
     lexer: lexer.Lexer,
     curToken: token.Token,
     peekToken: token.Token,
-    errors: ArrayListUnmanaged([]u8),
-    prefixParseFns: AutoHashMapUnmanaged(usize, prefixParserFn),
-    infixParseFns: AutoHashMapUnmanaged(usize, infixParserFn),
+    errors: ArrayList([]u8),
+    prefixParseFns: AutoHashMap(usize, prefixParserFn),
+    infixParseFns: AutoHashMap(usize, infixParserFn),
     arena: std.heap.ArenaAllocator,
 
     pub fn init(l: lexer.Lexer, allocator: std.mem.Allocator) Parser {
@@ -40,9 +40,9 @@ pub const Parser = struct {
             .lexer = l,
             .curToken = .illegal,
             .peekToken = .illegal,
-            .errors = .{},
-            .prefixParseFns = .{},
-            .infixParseFns = .{},
+            .errors = ArrayList([]u8).init(allocator),
+            .prefixParseFns = AutoHashMap(usize, prefixParserFn).init(allocator),
+            .infixParseFns = AutoHashMap(usize, infixParserFn).init(allocator),
             .arena = std.heap.ArenaAllocator.init(allocator),
         };
 
@@ -140,15 +140,18 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        self.errors.deinit();
+        self.prefixParseFns.deinit();
+        self.infixParseFns.deinit();
         self.arena.deinit();
     }
 
     fn registerPrefix(self: *Self, id: usize, f: prefixParserFn) !void {
-        try self.prefixParseFns.put(self.arena.allocator(), id, f);
+        try self.prefixParseFns.put(id, f);
     }
 
     fn registerInfix(self: *Self, id: usize, f: infixParserFn) !void {
-        try self.infixParseFns.put(self.arena.allocator(), id, f);
+        try self.infixParseFns.put(id, f);
     }
 
     fn nextToken(self: *Self) void {
@@ -165,7 +168,7 @@ pub const Parser = struct {
         ) catch {
             std.debug.panic("failed to format error message", .{});
         };
-        self.errors.append(self.arena.allocator(), msg) catch {
+        self.errors.append(msg) catch {
             std.debug.panic("failed to append error message", .{});
         };
     }
@@ -193,7 +196,7 @@ pub const Parser = struct {
         const msg = std.fmt.allocPrint(self.arena.allocator(), "no prefix parse function for {s} found", .{@tagName(t)}) catch {
             std.debug.panic("failed to format error message", .{});
         };
-        self.errors.append(self.arena.allocator(), msg) catch {
+        self.errors.append(msg) catch {
             std.debug.panic("failed to append error message", .{});
         };
     }
@@ -206,7 +209,7 @@ pub const Parser = struct {
         var prog = program.Program.init(self.arena.allocator());
         while (self.curToken != .eof) {
             const stmt = self.parseStatement();
-            prog.statements.append(self.arena.allocator(), stmt) catch {
+            prog.statements.append(stmt) catch {
                 std.debug.panic("failed to append statement", .{});
             };
             self.nextToken();
@@ -382,7 +385,7 @@ pub const Parser = struct {
 
         while (!self.curTokenIs(.rbrace) and !self.curTokenIs(.eof)) {
             const stmt = self.parseStatement();
-            block.statements.append(self.arena.allocator(), stmt) catch {
+            block.statements.append(stmt) catch {
                 std.debug.panic("failed to append statement", .{});
             };
             self.nextToken();
@@ -424,8 +427,8 @@ pub const Parser = struct {
         return exp;
     }
 
-    fn parseCallArguments(self: *Self) ArrayListUnmanaged(*ast.Expression) {
-        var args: ArrayListUnmanaged(*ast.Expression) = .{};
+    fn parseCallArguments(self: *Self) ArrayList(*ast.Expression) {
+        var args = ArrayList(*ast.Expression).init(self.arena.allocator());
 
         if (self.peekTokenIs(.rparen)) {
             self.nextToken();
@@ -437,7 +440,7 @@ pub const Parser = struct {
             return args;
         };
 
-        args.append(self.arena.allocator(), arg) catch {
+        args.append(arg) catch {
             std.debug.panic("failed to append argument", .{});
         };
 
@@ -447,7 +450,7 @@ pub const Parser = struct {
             var a = self.parseExpression(.lowest) orelse {
                 return args;
             };
-            args.append(self.arena.allocator(), a) catch {
+            args.append(a) catch {
                 std.debug.panic("failed to append argument", .{});
             };
         }
@@ -490,8 +493,8 @@ pub const Parser = struct {
         return stmt;
     }
 
-    fn parseFunctionParameters(self: *Self) ArrayListUnmanaged(*ast.Identifier) {
-        var identifiers: ArrayListUnmanaged(*ast.Identifier) = .{};
+    fn parseFunctionParameters(self: *Self) ArrayList(*ast.Identifier) {
+        var identifiers = ArrayList(*ast.Identifier).init(self.arena.allocator());
         if (self.peekTokenIs(.rparen)) {
             self.nextToken();
             return identifiers;
@@ -503,8 +506,8 @@ pub const Parser = struct {
             std.debug.panic("failed to create identifier", .{});
         };
         ident.* = .{ .identifier = parseIdentifier(self.curToken) };
-        std.log.warn("identifier: {s}", .{ident.identifier});
-        identifiers.append(self.arena.allocator(), ident) catch {
+        // std.log.warn("identifier: {s}", .{ident.identifier});
+        identifiers.append(ident) catch {
             std.debug.panic("failed to append identifier", .{});
         };
 
@@ -516,7 +519,7 @@ pub const Parser = struct {
                 std.debug.panic("failed to create identifier", .{});
             };
             i.* = .{ .identifier = parseIdentifier(self.curToken) };
-            identifiers.append(self.arena.allocator(), i) catch {
+            identifiers.append(i) catch {
                 std.debug.panic("failed to append identifier", .{});
             };
         }
@@ -578,7 +581,7 @@ pub const Parser = struct {
             },
             else => blk: {
                 const msg = std.fmt.allocPrint(self.arena.allocator(), "could not parse {s} as integer", .{self.curToken}) catch unreachable;
-                self.errors.append(self.arena.allocator(), msg) catch {
+                self.errors.append(msg) catch {
                     std.debug.panic("failed to append error message", .{});
                 };
                 int.* = .{ .integer = -1 };
@@ -949,12 +952,12 @@ test "test function literal parsing" {
     assert(std.mem.eql(u8, stmt.expressionStatement.expression.functionLiteral.body.statements.items[0].expressionStatement.expression.infix.right.identifier.identifier, "y"));
 }
 
-fn initArray(comptime T: anytype, comptime items: []const T) !ArrayListUnmanaged(T) {
-    var list: ArrayListUnmanaged(T) = .{};
+fn initArray(comptime T: anytype, comptime items: []const T) !ArrayList(T) {
+    var list = ArrayList(T).init(test_allocator);
 
     // Since we're using std.meta.Any, handle potential memory allocation failures
     inline for (items) |item| {
-        try list.append(test_allocator, item);
+        try list.append(item);
     }
 
     return list;
@@ -963,7 +966,7 @@ fn initArray(comptime T: anytype, comptime items: []const T) !ArrayListUnmanaged
 test "test function parameter parsing" {
     var tests = [_]struct {
         input: []const u8,
-        expected: ArrayListUnmanaged([]const u8),
+        expected: ArrayList([]const u8),
         // expected: [][]const u8,
     }{
         // .{ .input = "fn() {};", .expected = [_][]const u8{""} },
@@ -994,7 +997,7 @@ test "test function parameter parsing" {
 
     var i: usize = 0;
     while (i < tests.len) {
-        tests[i].expected.deinit(test_allocator);
+        tests[i].expected.deinit();
         i += 1;
     }
 }

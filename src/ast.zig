@@ -1,7 +1,7 @@
 const std = @import("std");
 const token = @import("token.zig");
 const program = @import("program.zig");
-const ArrayListUnmanaged = std.ArrayListUnmanaged;
+const ArrayList = std.ArrayList;
 
 pub const Node = union(enum) {
     const Self = @This();
@@ -33,12 +33,12 @@ pub const Expression = union(enum) {
         alternative: ?*BlockStatement,
     },
     functionLiteral: struct {
-        parameters: ArrayListUnmanaged(*Identifier),
+        parameters: ArrayList(*Identifier),
         body: *BlockStatement,
     },
     callExpression: struct {
         function: *Expression,
-        arguments: ArrayListUnmanaged(*Expression),
+        arguments: ArrayList(*Expression),
     },
 
     pub fn format(
@@ -125,14 +125,6 @@ pub const Statement = union(enum) {
     },
     blockStatement: *BlockStatement,
 
-    pub fn init(allocator: std.mem.Allocator) *Statement {
-        var statement = allocator.create(Statement) catch {
-            std.debug.panic("Failed to allocate Statement", .{});
-        };
-
-        return statement;
-    }
-
     pub fn format(
         self: Self,
         comptime fmt: []const u8,
@@ -167,14 +159,15 @@ pub const Statement = union(enum) {
 pub const BlockStatement = struct {
     const Self = @This();
 
-    statements: ArrayListUnmanaged(*Statement),
+    allocator: std.mem.Allocator,
+    statements: ArrayList(*Statement),
 
     pub fn init(allocator: std.mem.Allocator) *BlockStatement {
         var block = allocator.create(BlockStatement) catch {
             std.debug.panic("Failed to allocate BlockStatement", .{});
         };
 
-        block.statements = .{};
+        block.* = .{ .statements = ArrayList(*Statement).init(allocator), .allocator = allocator };
         return block;
     }
 
@@ -188,11 +181,11 @@ pub const BlockStatement = struct {
         _ = options;
         // _ = self;
 
-        try writer.writeAll("{");
+        // try writer.writeAll("{");
         for (self.statements.items) |statement| {
             try writer.print("{s}", .{statement});
         }
-        try writer.writeAll("}");
+        // try writer.writeAll("}");
     }
 };
 
