@@ -40,6 +40,7 @@ pub const Expression = union(enum) {
         function: *Expression,
         arguments: ArrayList(*Expression),
     },
+    stringLiteral: []const u8,
 
     pub fn format(
         self: Self,
@@ -103,6 +104,9 @@ pub const Expression = union(enum) {
                     try writer.print("{s}", .{arg});
                 }
                 try writer.print(")", .{});
+            },
+            .stringLiteral => |str| {
+                try writer.print("{s}", .{str});
             },
         }
     }

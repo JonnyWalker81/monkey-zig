@@ -30,6 +30,7 @@ pub const Token = union(enum) {
     return_token,
     true_token,
     false_token,
+    string: []const u8,
 
     pub fn isKeyword(ident: []const u8) ?Token {
         const map = std.ComptimeStringMap(Token, .{
@@ -73,6 +74,7 @@ pub const Token = union(enum) {
             .return_token => return 24,
             .true_token => return 25,
             .false_token => return 26,
+            .string => return 27,
         }
     }
 
@@ -113,6 +115,7 @@ pub const Token = union(enum) {
             .return_token => try writer.print("RETURN", .{}),
             .true_token => try writer.print("TRUE", .{}),
             .false_token => try writer.print("FALSE", .{}),
+            .string => |s| try writer.print("STRING: {s}", .{s}),
         }
     }
 };

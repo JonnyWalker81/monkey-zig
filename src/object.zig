@@ -16,6 +16,7 @@ pub const Object = union(enum) {
         body: *ast.BlockStatement,
         env: *environment.Environment,
     },
+    string: []const u8,
     err: []const u8,
 
     // pub fn init(allocator: std.mem.Allocator) Self {
@@ -53,6 +54,13 @@ pub const Object = union(enum) {
         };
     }
 
+    pub fn stringValue(self: *Self) []const u8 {
+        return switch (self.*) {
+            .string => |s| s,
+            else => "nil",
+        };
+    }
+
     pub fn typeId(self: *Self) []const u8 {
         return switch (self.*) {
             .nil => "NULL",
@@ -61,6 +69,7 @@ pub const Object = union(enum) {
             .function => "FUNCTION",
             .err => "ERROR",
             .returnValue => |r| r.typeId(),
+            .string => "STRING",
         };
     }
 
@@ -99,6 +108,9 @@ pub const Object = union(enum) {
             },
             .err => |e| {
                 try writer.print("{s}", .{e});
+            },
+            .string => |s| {
+                try writer.print("{s}", .{s});
             },
         }
     }

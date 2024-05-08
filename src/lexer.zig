@@ -4,14 +4,21 @@ const token = @import("token.zig");
 pub const Lexer = struct {
     const Self = @This();
 
-    input: []const u8,
+    arena: std.heap.ArenaAllocator,
+    input: []u8,
     position: usize,
     readPosition: usize,
     ch: u8,
 
-    pub fn init(input: []const u8) Lexer {
+    pub fn init(allocator: std.mem.Allocator, input: []const u8) Lexer {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        const ownedInput = arena.allocator().alloc(u8, input.len) catch {
+            std.debug.panic("failed to allocate memory", .{});
+        };
+        @memcpy(ownedInput, input);
         var l = Lexer{
-            .input = input,
+            .arena = arena,
+            .input = ownedInput,
             .position = 0,
             .readPosition = 0,
             .ch = 0,
@@ -20,6 +27,10 @@ pub const Lexer = struct {
         l.readChar();
 
         return l;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
     }
 
     fn isLetter(ch: u8) bool {
@@ -93,6 +104,9 @@ pub const Lexer = struct {
                     break :blk .assign;
                 }
             },
+            '"' => {
+                return .{ .string = self.readString() };
+            },
             0 => .eof,
             else => {
                 if (isLetter(self.ch)) {
@@ -116,6 +130,18 @@ pub const Lexer = struct {
         return tok;
     }
 
+    pub fn readString(self: *Self) []const u8 {
+        self.readChar();
+        const position = self.position;
+        while (self.ch != '"' and self.ch != 0) {
+            self.readChar();
+        }
+
+        self.readChar();
+
+        return self.input[position .. self.position - 1];
+    }
+
     pub fn readChar(self: *Self) void {
         if (self.readPosition >= self.input.len) {
             self.ch = 0;
@@ -137,6 +163,7 @@ pub const Lexer = struct {
 };
 
 const expectEqualDeep = std.testing.expectEqualDeep;
+const test_allocator = std.testing.allocator;
 test "test next token" {
     const input =
         \\let five = 5;
@@ -158,7 +185,10 @@ test "test next token" {
         \\
         \\10 == 10;
         \\10 != 9;
+        \\"foobar"
+        \\"foo bar"
     ;
+
     const tests = [_]struct {
         token: token.Token,
         expected: []const u8,
@@ -236,10 +266,13 @@ test "test next token" {
         .{ .token = .not_eq, .expected = "==" },
         .{ .token = .{ .int = "9" }, .expected = "9" },
         .{ .token = .semicolon, .expected = ";" },
+        .{ .token = .{ .string = "foobar" }, .expected = "foobar" },
+        .{ .token = .{ .string = "foo bar" }, .expected = "foo bar" },
         .{ .token = .eof, .expected = "" },
     };
 
-    var l = Lexer.init(input);
+    var l = Lexer.init(test_allocator, input);
+    defer l.deinit();
 
     for (tests) |t| {
         const tok = l.nextToken();

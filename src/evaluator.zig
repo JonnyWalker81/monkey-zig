@@ -111,9 +111,9 @@ pub const Evaluator = struct {
         // std.log.warn("evaluating expression...{any}", .{expression});
         switch (expression.*) {
             .identifier => |i| {
-                std.log.warn("evaluating identifier...{any}", .{i});
+                // std.log.warn("evaluating identifier...{any}", .{i});
                 if (env.get(i.identifier)) |obj| {
-                    std.log.warn("found identifier...{any}", .{obj});
+                    // std.log.warn("found identifier...{any} for {s}", .{ obj, i.identifier });
                     return obj;
                 } else {
                     return self.new_error("identifier not found: {s}", .{i.identifier});
@@ -142,6 +142,8 @@ pub const Evaluator = struct {
                 }
             },
             .infix => |i| {
+                // std.log.warn("evaluating infix...{any}", .{i.left});
+                // std.log.warn("evaluating infix...{any}", .{i});
                 var left = self.eval_expression(i.left, env);
                 if (is_error(left)) {
                     return left;
@@ -172,6 +174,12 @@ pub const Evaluator = struct {
                 }
 
                 return self.apply_function(function.?, args.items);
+            },
+            .stringLiteral => |s| {
+                std.log.warn("evaluating string literal...{s}", .{s});
+                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                // obj.* = .{ .string = s };
+                return obj;
             },
             else => {
                 return null;
@@ -397,7 +405,9 @@ var test_allocator = std.testing.allocator;
 
 fn test_eval(allocator: std.mem.Allocator, evaluator: *Evaluator, input: []const u8) *object.Object {
     // std.log.warn("input: {s}\n", .{input});
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(allocator, input);
+    defer l.deinit();
+
     var p = parser.Parser.init(l, allocator);
     defer p.deinit();
     var prog = p.parseProgram();
@@ -695,3 +705,81 @@ test "test function application" {
         test_integer_object(o, t.expected);
     }
 }
+
+test "test closures" {
+    const input = "let newAdder = fn(x) { fn(y) { x + y }; }; let addTwo = newAdder(2); addTwo(2);";
+    const expected = 4;
+
+    var evaluator = Evaluator.init(test_allocator);
+    const o = test_eval(test_allocator, &evaluator, input);
+    defer evaluator.deinit();
+    test_integer_object(o, expected);
+}
+
+test "test string literal" {
+    const input = "\"hello world\"";
+    const expected = "hello world";
+
+    var evaluator = Evaluator.init(test_allocator);
+    const o = test_eval(test_allocator, &evaluator, input);
+    defer evaluator.deinit();
+    switch (o.*) {
+        .string => |s| {
+            assert(std.mem.eql(u8, s, expected));
+        },
+        else => {
+            std.debug.panic("object is not String. got={s}", .{o});
+        },
+    }
+}
+
+// test "memory test" {
+//     var gpa = std.testing.allocator;
+
+//     var arena = std.heap.ArenaAllocator.init(gpa);
+//     defer arena.deinit();
+
+//     var env = environment.Environment.init(arena.allocator());
+//     defer env.deinit();
+//     // defer _ = gpa.deinit();
+
+//     var lines = ArrayList([]const u8).init(gpa);
+//     try lines.append("let addTwo = fn(x) { x + 2; };");
+//     try lines.append("let result = addTwo(2);");
+//     try lines.append("result;");
+//     defer lines.deinit();
+
+//     for (lines.items) |line| {
+//         var l = lexer.Lexer.init(arena.allocator(), line);
+//         defer l.deinit();
+
+//         var p = parser.Parser.init(l, arena.allocator());
+//         defer p.deinit();
+
+//         var prog = p.parseProgram();
+
+//         if (p.errors.items.len > 0) {
+//             printParserErrors(p.errors);
+//             continue;
+//         }
+
+//         var node = .{ .program = &prog };
+
+//         var e = Evaluator.init(arena.allocator());
+//         defer e.deinit();
+
+//         var evaluated = e.eval(node, env);
+
+//         if (evaluated) |result| {
+//             std.log.warn("Evaled: {s}\n", .{result});
+//         }
+//     }
+// }
+
+// fn printParserErrors(errors: ArrayList([]u8)) void {
+//     std.debug.print("Woops! We ran into some monkey business here!\n", .{});
+//     std.debug.print(" parser errors:\n", .{});
+//     for (errors.items) |err| {
+//         std.debug.print("\t{s}\n", .{err});
+//     }
+// }

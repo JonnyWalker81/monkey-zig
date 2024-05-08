@@ -91,6 +91,11 @@ pub const Parser = struct {
             std.debug.panic("failed to register prefix", .{});
         };
 
+        var stringToken: token.Token = .{ .string = "" };
+        p.registerPrefix(stringToken.id(), parseStringLiteral) catch {
+            std.debug.panic("failed to register prefix", .{});
+        };
+
         var plusToken: token.Token = .plus;
         p.registerInfix(plusToken.id(), parseInfixExpression) catch {
             std.debug.panic("failed to register prefix", .{});
@@ -261,6 +266,14 @@ pub const Parser = struct {
         }
     }
 
+    fn parseStringLiteral(self: *Self) *ast.Expression {
+        var exp = self.arena.allocator().create(ast.Expression) catch {
+            std.debug.panic("failed to create expression", .{});
+        };
+        exp.* = .{ .stringLiteral = parseString(self.curToken) };
+        return exp;
+    }
+
     fn parseInfixExpression(self: *Self, left: *ast.Expression) *ast.Expression {
         const operator = self.curToken;
         const precedence = self.curPrecendence();
@@ -271,15 +284,21 @@ pub const Parser = struct {
             std.debug.panic("failed to create expression", .{});
         };
         right = self.parseExpression(precedence) orelse {
+            std.debug.panic("failed to parse expression", .{});
             return right;
         };
+
+        // std.log.warn("left: {s}", .{left});
 
         var exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         const op = std.fmt.allocPrint(self.arena.allocator(), "{s}", .{operator}) catch blk: {
+            std.debug.panic("failed to format operator: {s}", .{operator});
             break :blk "";
         };
+        // std.log.warn("operator: {s}", .{op});
+        // std.log.warn("right: {s}", .{right});
 
         exp.* = .{ .infix = .{ .left = left, .operator = op, .right = right } };
 
@@ -567,6 +586,13 @@ pub const Parser = struct {
         }
     }
 
+    fn parseString(t: token.Token) []const u8 {
+        switch (t) {
+            .string => |s| return s,
+            else => return "",
+        }
+    }
+
     fn parseIntegerLiteral(self: *Self) *ast.Expression {
         var int = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
@@ -655,7 +681,8 @@ test "test let statement" {
     };
 
     for (tests) |tt| {
-        const l = lexer.Lexer.init(tt.input);
+        var l = lexer.Lexer.init(test_allocator, tt.input);
+        defer l.deinit();
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
@@ -684,7 +711,9 @@ test "test return statement" {
         \\return 993322;
     ;
 
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
@@ -701,7 +730,9 @@ test "test return statement" {
 test "test identifier experssion" {
     const input = "foobar;";
 
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
@@ -720,7 +751,9 @@ test "test identifier experssion" {
 test "test integer literal experssion" {
     const input = "5;";
 
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
@@ -748,7 +781,9 @@ test "test parsing prefix expressions" {
     };
 
     for (prefixTests) |tt| {
-        var l = lexer.Lexer.init(tt.input);
+        var l = lexer.Lexer.init(test_allocator, tt.input);
+        defer l.deinit();
+
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
@@ -793,7 +828,9 @@ test "test parsing infix expressions" {
     };
 
     for (infixTests) |tt| {
-        var l = lexer.Lexer.init(tt.input);
+        var l = lexer.Lexer.init(test_allocator, tt.input);
+        defer l.deinit();
+
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
@@ -855,7 +892,9 @@ test "test operator precedence parsing" {
     };
 
     for (tests) |tt| {
-        var l = lexer.Lexer.init(tt.input);
+        var l = lexer.Lexer.init(test_allocator, tt.input);
+        defer l.deinit();
+
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
@@ -887,7 +926,9 @@ test "test boolean expression" {
     };
 
     for (tests) |tt| {
-        var l = lexer.Lexer.init(tt.input);
+        var l = lexer.Lexer.init(test_allocator, tt.input);
+        defer l.deinit();
+
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
@@ -907,7 +948,9 @@ test "test boolean expression" {
 test "test if expression" {
     const input = "if (x < y) { x }";
 
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
@@ -930,7 +973,9 @@ test "test if expression" {
 test "test function literal parsing" {
     const input = "fn(x, y) { x + y; }";
 
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
@@ -978,7 +1023,9 @@ test "test function parameter parsing" {
     };
 
     for (tests) |tt| {
-        var l = lexer.Lexer.init(tt.input);
+        var l = lexer.Lexer.init(test_allocator, tt.input);
+        defer l.deinit();
+
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
@@ -1005,7 +1052,9 @@ test "test function parameter parsing" {
 test "test call experssion parsing" {
     const input = "add(1, 2 * 3, 4 + 5);";
 
-    var l = lexer.Lexer.init(input);
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
@@ -1027,4 +1076,25 @@ test "test call experssion parsing" {
     assert(stmt.expressionStatement.expression.callExpression.arguments.items[2].infix.left.integer == 4);
     assert(std.mem.eql(u8, stmt.expressionStatement.expression.callExpression.arguments.items[2].infix.operator, "+"));
     assert(stmt.expressionStatement.expression.callExpression.arguments.items[2].infix.right.integer == 5);
+}
+
+test "test string literal expression" {
+    const input = "\"hello world\";";
+
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.stringLiteral)));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.stringLiteral, "hello world"));
 }

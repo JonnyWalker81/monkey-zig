@@ -10,7 +10,8 @@
 
       perSystem = { config, self', inputs', pkgs, system, ... }:
         let
-          inherit (pkgs) dockerTools stdenv zig_0_11 zls nodejs valgrind;
+          inherit (pkgs)
+            dockerTools stdenv zig_0_11 zls nodejs valgrind rr lldb;
           inherit (dockerTools) buildImage;
           name = "example";
           version = "0.1.0";
@@ -20,7 +21,7 @@
               inherit name;
               inherit version;
               src = ./.;
-              nativeBuildInputs = [ zig_0_11.hook nodejs valgrind zls ];
+              nativeBuildInputs = [ zig_0_11.hook nodejs valgrind zls rr lldb ];
               shellHook = ''
                 export ZIG_GLOBAL_CACHE_DIR=$PWD/zig-out
               '';

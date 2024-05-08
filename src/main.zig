@@ -30,14 +30,14 @@ fn start() !void {
     var r = buf.reader();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    var env = environment.Environment.init(gpa.allocator());
-    defer env.deinit();
 
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+
+    var env = environment.Environment.init(arena.allocator());
+    defer env.deinit();
     while (true) {
         // defer _ = gpa.deinit();
-
-        var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-        defer arena.deinit();
 
         try stdout.print("{s}", .{prompt});
         try bw.flush();
@@ -46,9 +46,10 @@ fn start() !void {
         var line = try r.readUntilDelimiterOrEof(&line_buf, '\n');
 
         if (line) |input| {
-            var l = lexer.Lexer.init(input);
+            var l = lexer.Lexer.init(arena.allocator(), input);
+            defer l.deinit();
 
-            var p = parser.Parser.init(l, gpa.allocator());
+            var p = parser.Parser.init(l, arena.allocator());
             defer p.deinit();
 
             var program = p.parseProgram();
@@ -60,7 +61,7 @@ fn start() !void {
 
             var node = .{ .program = &program };
 
-            var e = evaluator.Evaluator.init(gpa.allocator());
+            var e = evaluator.Evaluator.init(arena.allocator());
             defer e.deinit();
 
             var evaluated = e.eval(node, env);
