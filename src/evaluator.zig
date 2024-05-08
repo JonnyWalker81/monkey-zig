@@ -176,9 +176,9 @@ pub const Evaluator = struct {
                 return self.apply_function(function.?, args.items);
             },
             .stringLiteral => |s| {
-                std.log.warn("evaluating string literal...{s}", .{s});
+                // std.log.warn("evaluating string literal...{s}", .{s});
                 var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-                // obj.* = .{ .string = s };
+                obj.* = .{ .string = self.arena.allocator().dupe(u8, s) catch unreachable };
                 return obj;
             },
             else => {
