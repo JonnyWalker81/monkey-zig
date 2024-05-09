@@ -41,6 +41,9 @@ pub const Expression = union(enum) {
         arguments: ArrayList(*Expression),
     },
     stringLiteral: []const u8,
+    arrayLiteral: struct {
+        elements: ArrayList(*Expression),
+    },
 
     pub fn format(
         self: Self,
@@ -107,6 +110,16 @@ pub const Expression = union(enum) {
             },
             .stringLiteral => |str| {
                 try writer.print("{s}", .{str});
+            },
+            .arrayLiteral => |arr| {
+                try writer.print("[", .{});
+                for (arr.elements.items, 0..) |elem, i| {
+                    if (i > 0) {
+                        try writer.print(", ", .{});
+                    }
+                    try writer.print("{s}", .{elem});
+                }
+                try writer.print("]", .{});
             },
         }
     }

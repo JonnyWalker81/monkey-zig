@@ -107,6 +107,8 @@ pub const Lexer = struct {
             '"' => {
                 return .{ .string = self.readString() };
             },
+            '[' => .lbracket,
+            ']' => .rbracket,
             0 => .eof,
             else => {
                 if (isLetter(self.ch)) {
@@ -187,6 +189,7 @@ test "test next token" {
         \\10 != 9;
         \\"foobar"
         \\"foo bar"
+        \\[1, 2];
     ;
 
     const tests = [_]struct {
@@ -268,6 +271,12 @@ test "test next token" {
         .{ .token = .semicolon, .expected = ";" },
         .{ .token = .{ .string = "foobar" }, .expected = "foobar" },
         .{ .token = .{ .string = "foo bar" }, .expected = "foo bar" },
+        .{ .token = .lbracket, .expected = "[" },
+        .{ .token = .{ .int = "1" }, .expected = "1" },
+        .{ .token = .comma, .expected = "," },
+        .{ .token = .{ .int = "2" }, .expected = "2" },
+        .{ .token = .rbracket, .expected = "]" },
+        .{ .token = .semicolon, .expected = ";" },
         .{ .token = .eof, .expected = "" },
     };
 

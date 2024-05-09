@@ -23,6 +23,8 @@ pub const Token = union(enum) {
     rparen,
     lbrace,
     rbrace,
+    lbracket,
+    rbracket,
     function,
     let,
     if_token,
@@ -75,6 +77,8 @@ pub const Token = union(enum) {
             .true_token => return 25,
             .false_token => return 26,
             .string => return 27,
+            .lbracket => return 28,
+            .rbracket => return 29,
         }
     }
 
@@ -116,6 +120,8 @@ pub const Token = union(enum) {
             .true_token => try writer.print("TRUE", .{}),
             .false_token => try writer.print("FALSE", .{}),
             .string => |s| try writer.print("STRING: {s}", .{s}),
+            .lbracket => try writer.print("[", .{}),
+            .rbracket => try writer.print("]", .{}),
         }
     }
 };

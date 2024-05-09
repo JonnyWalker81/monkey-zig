@@ -3,6 +3,8 @@ const ast = @import("ast.zig");
 const environment = @import("environment.zig");
 const ArrayList = std.ArrayList;
 
+pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, []*Object) ?*Object;
+
 pub const Object = union(enum) {
     const Self = @This();
     // allocator: std.mem.Allocator,
@@ -17,6 +19,7 @@ pub const Object = union(enum) {
         env: *environment.Environment,
     },
     string: []const u8,
+    builtin: BuiltinFn,
     err: []const u8,
 
     // pub fn init(allocator: std.mem.Allocator) Self {
@@ -70,6 +73,7 @@ pub const Object = union(enum) {
             .err => "ERROR",
             .returnValue => |r| r.typeId(),
             .string => "STRING",
+            .builtin => "BUILTIN",
         };
     }
 
@@ -111,6 +115,9 @@ pub const Object = union(enum) {
             },
             .string => |s| {
                 try writer.print("{s}", .{s});
+            },
+            .builtin => {
+                try writer.print("builtin function", .{});
             },
         }
     }

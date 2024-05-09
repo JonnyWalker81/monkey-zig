@@ -6,18 +6,58 @@ const program = @import("program.zig");
 const ast = @import("ast.zig");
 const environment = @import("environment.zig");
 const ArrayList = std.ArrayList;
+const StringHashMap = std.StringHashMap;
+
+// pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, ArrayList(*object.Object)) ?object.Object;
+
+pub fn load_builtins(allocator: std.mem.Allocator) !StringHashMap(*object.Object) {
+    var builtinFns = StringHashMap(*object.Object).init(allocator);
+    var lenObj = try allocator.create(object.Object);
+    lenObj.* = .{ .builtin = len };
+    try builtinFns.put("len", lenObj);
+    return builtinFns;
+}
+
+pub fn len(allocator: std.mem.Allocator, a: []*object.Object) ?*object.Object {
+    if (a.len != 1) {
+        return new_error(allocator, "wrong number of arguments. got={d}, want=1", .{a.len});
+    }
+
+    // var a: *object.Object = a[0];
+    switch (a[0].*) {
+        .string => |s| {
+            var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+            obj.* = .{ .integer = @as(i64, @intCast(s.len)) };
+            return obj;
+        },
+        else => {
+            return new_error(allocator, "argument to `len` not supported, got {s}", .{a[0].typeId()});
+        },
+    }
+}
 
 // var NULL = .nil;
 var TRUE = object.Object{ .boolean = true };
 var FALSE = object.Object{ .boolean = false };
 
+pub fn new_error(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) *object.Object {
+    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    const msg = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
+    obj.* = .{ .err = msg };
+    return obj;
+}
+
 pub const Evaluator = struct {
     const Self = @This();
 
     arena: std.heap.ArenaAllocator,
+    builtins: StringHashMap(*object.Object),
 
     pub fn init(allocator: std.mem.Allocator) Self {
-        return .{ .arena = std.heap.ArenaAllocator.init(allocator) };
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        var bFuncs = load_builtins(arena.allocator()) catch std.debug.panic("failed to load builtins", .{});
+
+        return .{ .arena = arena, .builtins = bFuncs };
     }
 
     pub fn deinit(self: *Self) void {
@@ -115,9 +155,13 @@ pub const Evaluator = struct {
                 if (env.get(i.identifier)) |obj| {
                     // std.log.warn("found identifier...{any} for {s}", .{ obj, i.identifier });
                     return obj;
-                } else {
-                    return self.new_error("identifier not found: {s}", .{i.identifier});
                 }
+
+                if (self.builtins.get(i.identifier)) |builtin| {
+                    return builtin;
+                }
+
+                return new_error(self.arena.allocator(), "identifier not found: {s}", .{i.identifier});
             },
             .integer => |i| {
                 var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
@@ -194,8 +238,11 @@ pub const Evaluator = struct {
                 var evaluated = self.eval_block_statement(f.body, extendedEnv);
                 return unwrap_return_value(evaluated);
             },
+            .builtin => |b| {
+                return b(self.arena.allocator(), args);
+            },
             else => {
-                return self.new_error("not a function: {s}", .{fnObj.typeId()});
+                return new_error(self.arena.allocator(), "not a function: {s}", .{fnObj.typeId()});
             },
         }
     }
@@ -284,17 +331,29 @@ pub const Evaluator = struct {
 
     pub fn eval_infix_expression(self: *Self, operator: []const u8, left: *object.Object, right: *object.Object) ?*object.Object {
         if (!std.mem.eql(u8, left.typeId(), right.typeId())) {
-            return self.new_error("type mismatch: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
+            return new_error(self.arena.allocator(), "type mismatch: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
         }
         if (left.* == .integer and right.* == .integer) {
             return self.eval_integer_infix_expression(operator, left, right);
+        } else if (left.* == .string and right.* == .string) {
+            return self.eval_string_infix_expression(operator, left, right);
         } else if (std.mem.eql(u8, operator, "==")) {
             return self.eval_boolean_infix_expression(operator, left, right);
         } else if (std.mem.eql(u8, operator, "!=")) {
             return self.eval_boolean_infix_expression(operator, left, right);
         } else {
-            return self.new_error("unknown operator: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
+            return new_error(self.arena.allocator(), "unknown operator: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
         }
+    }
+
+    pub fn eval_string_infix_expression(self: *Self, operator: []const u8, left: *object.Object, right: *object.Object) ?*object.Object {
+        if (!std.mem.eql(u8, operator, "+")) {
+            return new_error(self.arena.allocator(), "unknown operator: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
+        }
+        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        var str = std.fmt.allocPrint(self.arena.allocator(), "{s}{s}", .{ left.stringValue(), right.stringValue() }) catch unreachable;
+        obj.* = .{ .string = str };
+        return obj;
     }
 
     pub fn eval_boolean_infix_expression(self: *Self, operator: []const u8, left: *object.Object, right: *object.Object) ?*object.Object {
@@ -337,7 +396,7 @@ pub const Evaluator = struct {
             obj.* = .{ .boolean = left.intValue() != right.intValue() };
             return obj;
         } else {
-            return self.new_error("unknown operator: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
+            return new_error(self.arena.allocator(), "unknown operator: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
         }
     }
 
@@ -347,7 +406,7 @@ pub const Evaluator = struct {
         } else if (std.mem.eql(u8, operator, "-")) {
             return self.eval_minus_prefix_operator(right);
         } else {
-            return self.new_error("unknown operator: {s}{s}", .{ operator, right.typeId() });
+            return new_error(self.arena.allocator(), "unknown operator: {s}{s}", .{ operator, right.typeId() });
         }
     }
 
@@ -359,7 +418,7 @@ pub const Evaluator = struct {
                 return obj;
             },
             else => {
-                return self.new_error("unknown operator: -{s}", .{right.typeId()});
+                return new_error(self.arena.allocator(), "unknown operator: -{s}", .{right.typeId()});
             },
         }
     }
@@ -390,13 +449,6 @@ pub const Evaluator = struct {
             return o.* == .err;
         }
         return false;
-    }
-
-    pub fn new_error(self: *Self, comptime fmt: []const u8, args: anytype) *object.Object {
-        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-        const msg = std.fmt.allocPrint(self.arena.allocator(), fmt, args) catch unreachable;
-        obj.* = .{ .err = msg };
-        return obj;
     }
 };
 
@@ -550,6 +602,7 @@ test "test bang operator" {
 
 const val = union(enum) {
     integer: i64,
+    string: []const u8,
     nil,
 };
 
@@ -578,6 +631,7 @@ test "test if else expressions" {
             .nil => {
                 assert(o.* == .nil);
             },
+            else => {},
         }
     }
 }
@@ -615,6 +669,7 @@ test "test error handling" {
         .{ .input = "if (10 > 1) { true + false; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "foobar", .expected = "identifier not found: foobar" },
+        .{ .input = "\"hello\" - \"world\"", .expected = "unknown operator: STRING - STRING" },
     };
 
     for (tests) |t| {
@@ -730,6 +785,76 @@ test "test string literal" {
         else => {
             std.debug.panic("object is not String. got={s}", .{o});
         },
+    }
+}
+
+test "test string concatenation" {
+    const input = "\"hello\" + \" \" + \"world\"";
+    const expected = "hello world";
+
+    var evaluator = Evaluator.init(test_allocator);
+    const o = test_eval(test_allocator, &evaluator, input);
+    defer evaluator.deinit();
+    switch (o.*) {
+        .string => |s| {
+            assert(std.mem.eql(u8, s, expected));
+        },
+        else => {
+            std.debug.panic("object is not String. got={s}", .{o});
+        },
+    }
+}
+
+test "test builtin functions" {
+    const tests = [_]struct {
+        input: []const u8,
+        expected: val,
+    }{
+        .{ .input = "len(\"\")", .expected = .{ .integer = 0 } },
+        .{ .input = "len(\"four\")", .expected = .{ .integer = 4 } },
+        .{ .input = "len(\"hello world\")", .expected = .{ .integer = 11 } },
+        .{ .input = "len(1)", .expected = .{ .string = "argument to `len` not supported, got INTEGER" } },
+        .{ .input = "len(\"one\", \"two\")", .expected = .{ .string = "wrong number of arguments. got=2, want=1" } },
+        // .{ .input = "len([1, 2, 3])", .expected = 3 },
+        // .{ .input = "len([])", .expected = 0 },
+        // .{ .input = "first([1, 2, 3])", .expected = 1 },
+        // .{ .input = "first([])", .expected = 0 },
+        // .{ .input = "first(1)", .expected = 0 },
+        // .{ .input = "last([1, 2, 3])", .expected = 3 },
+        // .{ .input = "last([])", .expected = 0 },
+        // .{ .input = "last(1)", .expected = 0 },
+        // .{ .input = "rest([1, 2, 3])", .expected = 2 },
+        // .{ .input = "rest([])", .expected = 0 },
+        // .{ .input = "push([], 1)", .expected = 1 },
+        // .{ .input = "push(1, 1)", .expected = 0 },
+    };
+
+    for (tests) |t| {
+        var evaluator = Evaluator.init(test_allocator);
+        const o = test_eval(test_allocator, &evaluator, t.input);
+        defer evaluator.deinit();
+        switch (t.expected) {
+            .integer => {
+                test_integer_object(o, t.expected.integer);
+            },
+            .string => {
+                switch (o.*) {
+                    .string => |s| {
+                        assert(std.mem.eql(u8, s, t.expected.string));
+                    },
+                    .err => |e| {
+                        // std.log.warn("expected: {s}, actual: {s}\n", .{ t.expected.string, e });
+                        assert(std.mem.eql(u8, e, t.expected.string));
+                    },
+                    else => {
+                        std.debug.panic("object is not String. got={s}", .{o});
+                    },
+                }
+            },
+            else => {
+                std.debug.panic("object is not Integer. got={s}", .{o});
+            },
+        }
     }
 }
 
