@@ -44,6 +44,10 @@ pub const Expression = union(enum) {
     arrayLiteral: struct {
         elements: ArrayList(*Expression),
     },
+    indexExpression: struct {
+        left: *Expression,
+        index: *Expression,
+    },
 
     pub fn format(
         self: Self,
@@ -92,7 +96,11 @@ pub const Expression = union(enum) {
             },
             .functionLiteral => |fnLit| {
                 try writer.print("fn(", .{});
-                for (fnLit.parameters.items) |param| {
+                for (fnLit.parameters.items, 0..) |param, i| {
+                    if (i > 0) {
+                        try writer.print(", ", .{});
+                    }
+
                     try writer.print("{s}", .{param.identifier});
                 }
                 try writer.print(") ", .{});
@@ -120,6 +128,9 @@ pub const Expression = union(enum) {
                     try writer.print("{s}", .{elem});
                 }
                 try writer.print("]", .{});
+            },
+            .indexExpression => |index| {
+                try writer.print("({s}[{s}])", .{ index.left, index.index });
             },
         }
     }

@@ -22,6 +22,7 @@ const Precedence = enum(u8) {
     product = 4,
     prefix = 5,
     call = 6,
+    index = 7,
 };
 
 pub const Parser = struct {
@@ -144,6 +145,10 @@ pub const Parser = struct {
             std.debug.panic("failed to register prefix", .{});
         };
 
+        p.registerInfix(lbracketToken.id(), parseIndexExpression) catch {
+            std.debug.panic("failed to register prefix", .{});
+        };
+
         p.nextToken();
         p.nextToken();
         return p;
@@ -190,6 +195,7 @@ pub const Parser = struct {
             .plus, .minus => .sum,
             .slash, .asterisk => .product,
             .lparen => .call,
+            .lbracket => .index,
             else => .lowest,
         };
     }
@@ -269,6 +275,23 @@ pub const Parser = struct {
             self.noPrefixParseFnError(self.curToken);
             return null;
         }
+    }
+
+    fn parseIndexExpression(self: *Self, left: *ast.Expression) *ast.Expression {
+        var exp = self.arena.allocator().create(ast.Expression) catch {
+            std.debug.panic("failed to create expression", .{});
+        };
+        self.nextToken();
+        var index = self.parseExpression(.lowest) orelse {
+            return exp;
+        };
+
+        if (!self.expectPeek(.rbracket)) {
+            return exp;
+        }
+
+        exp.* = .{ .indexExpression = .{ .left = left, .index = index } };
+        return exp;
     }
 
     fn parseArrayLiteral(self: *Self) *ast.Expression {
@@ -492,41 +515,6 @@ pub const Parser = struct {
 
         return exp;
     }
-
-    // fn parseCallArguments(self: *Self) ArrayList(*ast.Expression) {
-    //     var args = ArrayList(*ast.Expression).init(self.arena.allocator());
-
-    //     if (self.peekTokenIs(.rparen)) {
-    //         self.nextToken();
-    //         return args;
-    //     }
-
-    //     self.nextToken();
-    //     var arg = self.parseExpression(.lowest) orelse {
-    //         return args;
-    //     };
-
-    //     args.append(arg) catch {
-    //         std.debug.panic("failed to append argument", .{});
-    //     };
-
-    //     while (self.peekTokenIs(.comma)) {
-    //         self.nextToken();
-    //         self.nextToken();
-    //         var a = self.parseExpression(.lowest) orelse {
-    //             return args;
-    //         };
-    //         args.append(a) catch {
-    //             std.debug.panic("failed to append argument", .{});
-    //         };
-    //     }
-
-    //     if (!self.expectPeek(.rparen)) {
-    //         return args;
-    //     }
-
-    //     return args;
-    // }
 
     fn parseLetStatement(self: *Self) *ast.Statement {
         var stmt = self.arena.allocator().create(ast.Statement) catch {
@@ -936,6 +924,8 @@ test "test operator precedence parsing" {
         .{ .input = "a + add(b * c) + d;", .expected = "((a + add((b * c))) + d)" },
         .{ .input = "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8));", .expected = "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))" },
         .{ .input = "add(a + b + c * d / f + g);", .expected = "add((((a + b) + ((c * d) / f)) + g))" },
+        .{ .input = "a * [1, 2, 3, 4][b * c] * d;", .expected = "((a * ([1, 2, 3, 4][(b * c)])) * d)" },
+        .{ .input = "add(a * b[2], b[1], 2 * [1, 2][1]);", .expected = "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))" },
     };
 
     for (tests) |tt| {
@@ -950,8 +940,8 @@ test "test operator precedence parsing" {
 
         const actual = try std.fmt.allocPrint(test_allocator, "{s}", .{prog});
         defer test_allocator.free(actual);
-        // std.log.warn("{s}", .{tt.expected});
-        // std.log.warn("{s}", .{actual});
+        // std.log.warn("expected: {s}", .{tt.expected});
+        // std.log.warn("actual: {s}", .{actual});
         assert(std.mem.eql(u8, actual, tt.expected));
     }
 }
@@ -1172,4 +1162,28 @@ test "test parsing array literal" {
     assert(stmt.expressionStatement.expression.arrayLiteral.elements.items[2].infix.left.integer == 3);
     assert(std.mem.eql(u8, stmt.expressionStatement.expression.arrayLiteral.elements.items[2].infix.operator, "+"));
     assert(stmt.expressionStatement.expression.arrayLiteral.elements.items[2].infix.right.integer == 3);
+}
+
+test "test parsing index expressions" {
+    const input = "myArray[1 + 1]";
+
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.indexExpression)));
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.indexExpression.left.identifier.identifier, "myArray"));
+    assert(stmt.expressionStatement.expression.indexExpression.index.infix.left.integer == 1);
+    assert(std.mem.eql(u8, stmt.expressionStatement.expression.indexExpression.index.infix.operator, "+"));
+    assert(stmt.expressionStatement.expression.indexExpression.index.infix.right.integer == 1);
 }

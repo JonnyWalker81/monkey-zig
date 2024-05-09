@@ -36,7 +36,7 @@ pub fn len(allocator: std.mem.Allocator, a: []*object.Object) ?*object.Object {
     }
 }
 
-// var NULL = .nil;
+const NULL = .nil;
 var TRUE = object.Object{ .boolean = true };
 var FALSE = object.Object{ .boolean = false };
 
@@ -225,10 +225,51 @@ pub const Evaluator = struct {
                 obj.* = .{ .string = self.arena.allocator().dupe(u8, s) catch unreachable };
                 return obj;
             },
+            .arrayLiteral => |al| {
+                var elements = self.eval_expressions(al.elements, env);
+                if (elements.items.len == 1 and is_error(elements.items[0])) {
+                    return elements.items[0];
+                }
+                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                obj.* = .{ .array = elements };
+                return obj;
+            },
+            .indexExpression => |ie| {
+                var left = self.eval_expression(ie.left, env);
+                if (is_error(left)) {
+                    return left;
+                }
+
+                var index = self.eval_expression(ie.index, env);
+                if (is_error(index)) {
+                    return index;
+                }
+
+                return self.eval_index_expression(left.?, index.?);
+            },
             else => {
                 return null;
             },
         }
+    }
+
+    fn eval_index_expression(self: *Self, left: *object.Object, index: *object.Object) ?*object.Object {
+        if (left.* == .array and index.* == .integer) {
+            return self.eval_array_index_expression(left, index);
+        } else {
+            return new_error(self.arena.allocator(), "index operator not supported: {s}", .{left.typeId()});
+        }
+    }
+
+    fn eval_array_index_expression(self: *Self, obj: *object.Object, index: *object.Object) ?*object.Object {
+        var idx = index.intValue();
+        var max = obj.array.items.len - 1;
+        if (idx < 0 or idx > max) {
+            var nil: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+            nil.* = .nil;
+            return nil;
+        }
+        return obj.array.items[@as(usize, @intCast(idx))];
     }
 
     fn apply_function(self: *Self, fnObj: *object.Object, args: []*object.Object) ?*object.Object {
@@ -850,6 +891,61 @@ test "test builtin functions" {
                         std.debug.panic("object is not String. got={s}", .{o});
                     },
                 }
+            },
+            else => {
+                std.debug.panic("object is not Integer. got={s}", .{o});
+            },
+        }
+    }
+}
+
+test "test array literal" {
+    const input = "[1, 2 * 2, 3 + 3]";
+    const expected = [_]i64{ 1, 4, 6 };
+
+    var evaluator = Evaluator.init(test_allocator);
+    const o = test_eval(test_allocator, &evaluator, input);
+    defer evaluator.deinit();
+    switch (o.*) {
+        .array => |a| {
+            assert(a.items.len == expected.len);
+            for (a.items, expected) |elem, exp| {
+                test_integer_object(elem, exp);
+            }
+        },
+        else => {
+            std.debug.panic("object is not Array. got={s}", .{o});
+        },
+    }
+}
+
+test "test array index expressions" {
+    const tests = [_]struct {
+        input: []const u8,
+        expected: val,
+    }{
+        .{ .input = "[1, 2, 3][0]", .expected = .{ .integer = 1 } },
+        .{ .input = "[1, 2, 3][1]", .expected = .{ .integer = 2 } },
+        .{ .input = "[1, 2, 3][2]", .expected = .{ .integer = 3 } },
+        .{ .input = "let i = 0; [1][i];", .expected = .{ .integer = 1 } },
+        .{ .input = "[1, 2, 3][1 + 1];", .expected = .{ .integer = 3 } },
+        .{ .input = "let myArray = [1, 2, 3]; myArray[2];", .expected = .{ .integer = 3 } },
+        .{ .input = "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2];", .expected = .{ .integer = 6 } },
+        .{ .input = "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]", .expected = .{ .integer = 2 } },
+        .{ .input = "[1, 2, 3][3]", .expected = .nil },
+        .{ .input = "[1, 2, 3][-1]", .expected = .nil },
+    };
+
+    for (tests) |t| {
+        var evaluator = Evaluator.init(test_allocator);
+        const o = test_eval(test_allocator, &evaluator, t.input);
+        defer evaluator.deinit();
+        switch (t.expected) {
+            .integer => {
+                test_integer_object(o, t.expected.integer);
+            },
+            .nil => {
+                assert(o.* == .nil);
             },
             else => {
                 std.debug.panic("object is not Integer. got={s}", .{o});

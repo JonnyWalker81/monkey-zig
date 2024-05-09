@@ -20,6 +20,7 @@ pub const Object = union(enum) {
     },
     string: []const u8,
     builtin: BuiltinFn,
+    array: ArrayList(*Self),
     err: []const u8,
 
     // pub fn init(allocator: std.mem.Allocator) Self {
@@ -74,6 +75,7 @@ pub const Object = union(enum) {
             .returnValue => |r| r.typeId(),
             .string => "STRING",
             .builtin => "BUILTIN",
+            .array => "ARRAY",
         };
     }
 
@@ -118,6 +120,16 @@ pub const Object = union(enum) {
             },
             .builtin => {
                 try writer.print("builtin function", .{});
+            },
+            .array => |a| {
+                try writer.print("[", .{});
+                for (a.items, 0..) |item, i| {
+                    try writer.print("{s}", .{item});
+                    if (i != a.items.len - 1) {
+                        try writer.print(", ", .{});
+                    }
+                }
+                try writer.print("]", .{});
             },
         }
     }
