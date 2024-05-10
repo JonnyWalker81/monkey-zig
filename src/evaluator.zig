@@ -7,33 +7,141 @@ const ast = @import("ast.zig");
 const environment = @import("environment.zig");
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
+const ArrayHashMap = std.ArrayHashMap;
 
 // pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, ArrayList(*object.Object)) ?object.Object;
 
 pub fn load_builtins(allocator: std.mem.Allocator) !StringHashMap(*object.Object) {
     var builtinFns = StringHashMap(*object.Object).init(allocator);
+
     var lenObj = try allocator.create(object.Object);
     lenObj.* = .{ .builtin = len };
     try builtinFns.put("len", lenObj);
+
+    var firstObj = try allocator.create(object.Object);
+    firstObj.* = .{ .builtin = first };
+    try builtinFns.put("first", firstObj);
+
+    var lastObj = try allocator.create(object.Object);
+    lastObj.* = .{ .builtin = last };
+    try builtinFns.put("last", lastObj);
+
+    var restObj = try allocator.create(object.Object);
+    restObj.* = .{ .builtin = rest };
+    try builtinFns.put("rest", restObj);
+
+    var pushObj = try allocator.create(object.Object);
+    pushObj.* = .{ .builtin = push };
+    try builtinFns.put("push", pushObj);
+
     return builtinFns;
 }
 
-pub fn len(allocator: std.mem.Allocator, a: []*object.Object) ?*object.Object {
-    if (a.len != 1) {
-        return new_error(allocator, "wrong number of arguments. got={d}, want=1", .{a.len});
+pub fn len(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
+    if (args.len != 1) {
+        return new_error(allocator, "wrong number of arguments. got={d}, want=1", .{args.len});
     }
 
     // var a: *object.Object = a[0];
-    switch (a[0].*) {
+    switch (args[0].*) {
         .string => |s| {
             var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
             obj.* = .{ .integer = @as(i64, @intCast(s.len)) };
             return obj;
         },
+        .array => |arr| {
+            var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+            obj.* = .{ .integer = @as(i64, @intCast(arr.items.len)) };
+            return obj;
+        },
         else => {
-            return new_error(allocator, "argument to `len` not supported, got {s}", .{a[0].typeId()});
+            return new_error(allocator, "argument to `len` not supported, got {s}", .{args[0].typeId()});
         },
     }
+}
+
+pub fn first(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
+    if (args.len != 1) {
+        return new_error(allocator, "wrong number of arguments. got={d}, want=1", .{args.len});
+    }
+
+    if (args[0].* != .array) {
+        return new_error(allocator, "argument to `first` must be ARRAY, got {s}", .{args[0].typeId()});
+    }
+
+    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    var arr = args[0].array;
+    if (arr.items.len > 0) {
+        obj = arr.items[0];
+        return obj;
+    }
+
+    obj.* = .nil;
+    return obj;
+}
+
+pub fn last(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
+    if (args.len != 1) {
+        return new_error(allocator, "wrong number of arguments. got={d}, want=1", .{args.len});
+    }
+
+    if (args[0].* != .array) {
+        return new_error(allocator, "argument to `last` must be ARRAY, got {s}", .{args[0].typeId()});
+    }
+
+    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    var arr = args[0].array;
+    if (arr.items.len > 0) {
+        obj = arr.items[arr.items.len - 1];
+        return obj;
+    }
+
+    obj.* = .nil;
+    return obj;
+}
+
+pub fn rest(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
+    if (args.len != 1) {
+        return new_error(allocator, "wrong number of arguments. got={d}, want=1", .{args.len});
+    }
+
+    if (args[0].* != .array) {
+        return new_error(allocator, "argument to `rest` must be ARRAY, got {s}", .{args[0].typeId()});
+    }
+
+    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    var arr = args[0].array;
+    if (arr.items.len > 0) {
+        var newArr = ArrayList(*object.Object).init(allocator);
+        for (1..arr.items.len) |i| {
+            newArr.append(arr.items[i]) catch unreachable;
+        }
+        obj.* = .{ .array = newArr };
+        return obj;
+    }
+
+    obj.* = .nil;
+    return obj;
+}
+
+pub fn push(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
+    if (args.len != 2) {
+        return new_error(allocator, "wrong number of arguments. got={d}, want=2", .{args.len});
+    }
+
+    if (args[0].* != .array) {
+        return new_error(allocator, "argument to `push` must be ARRAY, got {s}", .{args[0].typeId()});
+    }
+
+    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    var arr = args[0].array;
+    var newArr = ArrayList(*object.Object).init(allocator);
+    for (arr.items) |item| {
+        newArr.append(item) catch unreachable;
+    }
+    newArr.append(args[1]) catch unreachable;
+    obj.* = .{ .array = newArr };
+    return obj;
 }
 
 const NULL = .nil;
@@ -247,6 +355,9 @@ pub const Evaluator = struct {
 
                 return self.eval_index_expression(left.?, index.?);
             },
+            .hashLiteral => |hl| {
+                return self.eval_hash_literal(hl, env);
+            },
             else => {
                 return null;
             },
@@ -270,6 +381,25 @@ pub const Evaluator = struct {
             return nil;
         }
         return obj.array.items[@as(usize, @intCast(idx))];
+    }
+
+    fn eval_hash_literal(self: *Self, hl: *ast.Expression, env: *environment.Environment) ?*object.Object {
+        var pairs = std.HashMap(object.HashKey, object.HashPair, object.HashKeyContext, std.hash_map.default_max_load_percentage).init(self.arena.allocator());
+        var it = hl.pairs.iterator();
+        while (it.next()) |pair| {
+            var key = self.eval_expression(pair.key_ptr, env);
+            if (is_error(key)) {
+                return key;
+            }
+            var value = self.eval_expression(pair.value_ptr, env);
+            if (is_error(value)) {
+                return value;
+            }
+            pairs.put(key.?.hashKey(), value.?) catch unreachable;
+        }
+        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        obj.* = .{ .hash = pairs };
+        return obj;
     }
 
     fn apply_function(self: *Self, fnObj: *object.Object, args: []*object.Object) ?*object.Object {
@@ -533,7 +663,7 @@ fn test_integer_object(obj: *object.Object, expected: i64) void {
             assert(i == expected);
         },
         else => {
-            std.log.warn("object is not Integer. got={s}\n", .{obj});
+            std.log.warn("test_integer_object: object is not Integer. got={s}\n", .{obj});
         },
     }
 }
@@ -644,6 +774,7 @@ test "test bang operator" {
 const val = union(enum) {
     integer: i64,
     string: []const u8,
+    integerArray: []const i64,
     nil,
 };
 
@@ -847,6 +978,7 @@ test "test string concatenation" {
 }
 
 test "test builtin functions" {
+    // const restArray = [_]i64{ 2, 3 };
     const tests = [_]struct {
         input: []const u8,
         expected: val,
@@ -856,18 +988,18 @@ test "test builtin functions" {
         .{ .input = "len(\"hello world\")", .expected = .{ .integer = 11 } },
         .{ .input = "len(1)", .expected = .{ .string = "argument to `len` not supported, got INTEGER" } },
         .{ .input = "len(\"one\", \"two\")", .expected = .{ .string = "wrong number of arguments. got=2, want=1" } },
-        // .{ .input = "len([1, 2, 3])", .expected = 3 },
-        // .{ .input = "len([])", .expected = 0 },
-        // .{ .input = "first([1, 2, 3])", .expected = 1 },
-        // .{ .input = "first([])", .expected = 0 },
-        // .{ .input = "first(1)", .expected = 0 },
-        // .{ .input = "last([1, 2, 3])", .expected = 3 },
-        // .{ .input = "last([])", .expected = 0 },
-        // .{ .input = "last(1)", .expected = 0 },
-        // .{ .input = "rest([1, 2, 3])", .expected = 2 },
-        // .{ .input = "rest([])", .expected = 0 },
-        // .{ .input = "push([], 1)", .expected = 1 },
-        // .{ .input = "push(1, 1)", .expected = 0 },
+        .{ .input = "len([1, 2, 3])", .expected = .{ .integer = 3 } },
+        .{ .input = "len([])", .expected = .{ .integer = 0 } },
+        .{ .input = "first([1, 2, 3])", .expected = .{ .integer = 1 } },
+        .{ .input = "first([])", .expected = .nil },
+        .{ .input = "first(1)", .expected = .{ .string = "argument to `first` must be ARRAY, got INTEGER" } },
+        .{ .input = "last([1, 2, 3])", .expected = .{ .integer = 3 } },
+        .{ .input = "last([])", .expected = .nil },
+        .{ .input = "last(1)", .expected = .{ .string = "argument to `last` must be ARRAY, got INTEGER" } },
+        .{ .input = "rest([1, 2, 3])", .expected = .{ .integerArray = &[_]i64{ 2, 3 } } },
+        .{ .input = "rest([])", .expected = .nil },
+        .{ .input = "push([], 1)", .expected = .{ .integerArray = &[_]i64{1} } },
+        .{ .input = "push(1, 1)", .expected = .{ .string = "argument to `push` must be ARRAY, got INTEGER" } },
     };
 
     for (tests) |t| {
@@ -892,8 +1024,21 @@ test "test builtin functions" {
                     },
                 }
             },
-            else => {
-                std.debug.panic("object is not Integer. got={s}", .{o});
+            .integerArray => {
+                switch (o.*) {
+                    .array => |a| {
+                        assert(a.items.len == t.expected.integerArray.len);
+                        for (a.items, t.expected.integerArray) |elem, exp| {
+                            test_integer_object(elem, exp);
+                        }
+                    },
+                    else => {
+                        std.debug.panic("object is not Array. got={s}", .{o});
+                    },
+                }
+            },
+            .nil => {
+                assert(o.* == .nil);
             },
         }
     }
@@ -951,6 +1096,51 @@ test "test array index expressions" {
                 std.debug.panic("object is not Integer. got={s}", .{o});
             },
         }
+    }
+}
+
+test "test hash literals" {
+    const input =
+        \\let two = "two";
+        \\{
+        \\    "one": 10 - 9,
+        \\    two: 1 + 1,
+        \\    "thr" + "ee": 6 / 2,
+        \\    4: 4,
+        \\    true: 5,
+        \\    false: 6
+        \\};
+    ;
+
+    var expected = std.HashMap(object.HashKey, i64, object.HashKeyContext, std.hash_map.default_max_load_percentage).init(test_allocator);
+    defer expected.deinit();
+    var oo = object.Object{ .string = "one" };
+    try expected.put(oo.hashKey(), 1);
+    oo = object.Object{ .string = "two" };
+    try expected.put(oo.hashKey(), 2);
+    oo = object.Object{ .string = "three" };
+    try expected.put(oo.hashKey(), 3);
+    oo = object.Object{ .integer = 4 };
+    try expected.put(oo.hashKey(), 4);
+    try expected.put(TRUE.hashKey(), 5);
+    try expected.put(FALSE.hashKey(), 6);
+
+    var evaluator = Evaluator.init(test_allocator);
+    const o = test_eval(test_allocator, &evaluator, input);
+    defer evaluator.deinit();
+    switch (o.*) {
+        .hash => |h| {
+            assert(h.pairs.count() == expected.count());
+            var it = expected.iterator();
+            while (it.next()) |pair| {
+                const expectedValue = expected.get(pair.key_ptr.*);
+                const actualValue = h.pairs.get(pair.key_ptr.*);
+                test_integer_object(actualValue.?.value, expectedValue.?);
+            }
+        },
+        else => {
+            std.debug.panic("object is not Hash. got={s}", .{o});
+        },
     }
 }
 

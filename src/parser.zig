@@ -102,6 +102,11 @@ pub const Parser = struct {
             std.debug.panic("failed to register prefix", .{});
         };
 
+        var lbraceToken: token.Token = .lbrace;
+        p.registerPrefix(lbraceToken.id(), parseHashLiteral) catch {
+            std.debug.panic("failed to register prefix", .{});
+        };
+
         var plusToken: token.Token = .plus;
         p.registerInfix(plusToken.id(), parseInfixExpression) catch {
             std.debug.panic("failed to register prefix", .{});
@@ -300,6 +305,43 @@ pub const Parser = struct {
         };
         var elements = self.parseExpressionList(.rbracket);
         exp.* = .{ .arrayLiteral = .{ .elements = elements } };
+        return exp;
+    }
+
+    fn parseHashLiteral(self: *Self) *ast.Expression {
+        var exp = self.arena.allocator().create(ast.Expression) catch {
+            std.debug.panic("failed to create expression", .{});
+        };
+        var pairs = AutoHashMap(*ast.Expression, *ast.Expression).init(self.arena.allocator());
+        while (!self.peekTokenIs(.rbrace)) {
+            self.nextToken();
+            var key = self.parseExpression(.lowest) orelse {
+                return exp;
+            };
+
+            if (!self.expectPeek(.colon)) {
+                return exp;
+            }
+
+            self.nextToken();
+            var value = self.parseExpression(.lowest) orelse {
+                return exp;
+            };
+
+            pairs.put(key, value) catch {
+                std.debug.panic("failed to put key value pair", .{});
+            };
+
+            if (!self.peekTokenIs(.rbrace) and !self.expectPeek(.comma)) {
+                return exp;
+            }
+        }
+
+        if (!self.expectPeek(.rbrace)) {
+            return exp;
+        }
+
+        exp.* = .{ .hashLiteral = .{ .pairs = pairs } };
         return exp;
     }
 
@@ -692,6 +734,7 @@ fn checkParserErrors(errors: []const []const u8) void {
 
 const assert = std.debug.assert;
 const test_allocator = std.testing.allocator;
+const StringHashMap = std.StringHashMap;
 const val = union(enum) {
     integer: i64,
     boolean: bool,
@@ -1186,4 +1229,146 @@ test "test parsing index expressions" {
     assert(stmt.expressionStatement.expression.indexExpression.index.infix.left.integer == 1);
     assert(std.mem.eql(u8, stmt.expressionStatement.expression.indexExpression.index.infix.operator, "+"));
     assert(stmt.expressionStatement.expression.indexExpression.index.infix.right.integer == 1);
+}
+
+test "test parsing hash literals string keys" {
+    const input = "{\"one\": 1, \"two\": 2, \"three\": 3}";
+
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.hashLiteral)));
+    assert(stmt.expressionStatement.expression.hashLiteral.pairs.count() == 3);
+
+    // const expected = [_]struct {
+    //     key: []const u8,
+    //     value: i64,
+    // }{
+    //     .{ .key = "one", .value = 1 },
+    //     .{ .key = "two", .value = 2 },
+    //     .{ .key = "three", .value = 3 },
+    // };
+
+    var expected = StringHashMap(i64).init(test_allocator);
+    try expected.put("one", 1);
+    try expected.put("two", 2);
+    try expected.put("three", 3);
+    defer expected.deinit();
+
+    var it = stmt.expressionStatement.expression.hashLiteral.pairs.iterator();
+    while (it.next()) |pair| {
+        if (expected.get(pair.key_ptr.*.stringLiteral)) |tt| {
+            // std.log.warn("expected: {s}, actual: {s}", .{ tt.key, pair.key_ptr.*.stringLiteral });
+            // std.log.warn("expected: {d}, actual: {d}", .{ tt, pair.value_ptr.*.integer });
+            assert(tt == pair.value_ptr.*.integer);
+            // assert(std.mem.eql(u8, pair.key_ptr.*.stringLiteral, pair.key_ptr.*.*.stringLiteral));
+            // assert(pair.value_ptr.integer == pair.value_ptr.*);
+            // assert(std.mem.eql(u8, pair.key_ptr.*.stringLiteral, tt.key));
+            // assert(pair.value_ptr.*.integer == tt.value);
+        }
+    }
+}
+
+test "test parsing empty hash literal" {
+    const input = "{}";
+
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.hashLiteral)));
+    assert(stmt.expressionStatement.expression.hashLiteral.pairs.count() == 0);
+}
+
+test "test parsing hash literals with expressions" {
+    const input = "{\"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5}";
+
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    var prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.expressionStatement)));
+    assert(std.mem.eql(u8, @tagName(stmt.*.expressionStatement.expression.*), @tagName(ast.Expression.hashLiteral)));
+    assert(stmt.expressionStatement.expression.hashLiteral.pairs.count() == 3);
+
+    // const expected = [_]struct {
+    //     key: []const u8,
+    //     value: i64,
+    // }{
+    //     .{ .key = "one", .value = 1 },
+    //     .{ .key = "two", .value = 2 },
+    //     .{ .key = "three", .value = 3 },
+    // };
+
+    var expected = StringHashMap(i64).init(test_allocator);
+    try expected.put("one", 1);
+    try expected.put("two", 2);
+    try expected.put("three", 3);
+    defer expected.deinit();
+
+    var it = stmt.expressionStatement.expression.hashLiteral.pairs.iterator();
+
+    while (it.next()) |pair| {
+        if (expected.get(pair.key_ptr.*.stringLiteral)) |_| {
+            // std.log.warn("expected: {s}, actual: {s}", .{ tt.key, pair.key_ptr.*.stringLiteral });
+            // std.log.warn("expected: {d}, actual: {d}", .{ tt, pair.value_ptr.*.integer });
+            if (std.mem.eql(u8, pair.key_ptr.*.stringLiteral, "one")) {
+                testInfixExpression(pair.value_ptr.*, .{ .integer = 0 }, "+", .{ .integer = 1 });
+            } else if (std.mem.eql(u8, pair.key_ptr.*.stringLiteral, "two")) {
+                testInfixExpression(pair.value_ptr.*, .{ .integer = 10 }, "-", .{ .integer = 8 });
+            } else if (std.mem.eql(u8, pair.key_ptr.*.stringLiteral, "three")) {
+                testInfixExpression(pair.value_ptr.*, .{ .integer = 15 }, "/", .{ .integer = 5 });
+            }
+            // assert(tt == pair.value_ptr.*.integer);
+            // assert(std.mem.eql(u8, pair.key_ptr.*.stringLiteral, pair.key_ptr.*.*.stringLiteral));
+            // assert(pair.value_ptr.integer == pair.value_ptr.*);
+            // assert(std.mem.eql(u8, pair.key_ptr.*.stringLiteral, tt.key));
+            // assert(pair.value_ptr.*.integer == tt.value);
+        }
+    }
+}
+
+fn testInfixExpression(exp: *ast.Expression, left: val, operator: []const u8, right: val) void {
+    assert(std.mem.eql(u8, @tagName(exp.*), @tagName(ast.Expression.infix)));
+    assert(std.mem.eql(u8, exp.infix.operator, operator));
+    switch (left) {
+        .integer => |i| assert(exp.infix.left.integer == i),
+        .boolean => |b| assert(exp.infix.left.boolean == b),
+        .str => |_| assert(false),
+    }
+    switch (right) {
+        .integer => |i| assert(exp.infix.right.integer == i),
+        .boolean => |b| assert(exp.infix.right.boolean == b),
+        .str => |_| assert(false),
+    }
 }

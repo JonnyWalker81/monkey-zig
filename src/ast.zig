@@ -2,6 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const program = @import("program.zig");
 const ArrayList = std.ArrayList;
+const AutoHashMap = std.AutoHashMap;
 
 pub const Node = union(enum) {
     const Self = @This();
@@ -47,6 +48,9 @@ pub const Expression = union(enum) {
     indexExpression: struct {
         left: *Expression,
         index: *Expression,
+    },
+    hashLiteral: struct {
+        pairs: AutoHashMap(*Expression, *Expression),
     },
 
     pub fn format(
@@ -131,6 +135,19 @@ pub const Expression = union(enum) {
             },
             .indexExpression => |index| {
                 try writer.print("({s}[{s}])", .{ index.left, index.index });
+            },
+            .hashLiteral => |hash| {
+                try writer.print("{{", .{});
+                var it = hash.pairs.iterator();
+                var i: usize = 0;
+                while (it.next()) |entry| {
+                    if (i > 0) {
+                        try writer.print(", ", .{});
+                    }
+                    try writer.print("{s}: {s}", .{ entry.key_ptr, entry.value_ptr });
+                    i += 1;
+                }
+                try writer.print("}}", .{});
             },
         }
     }

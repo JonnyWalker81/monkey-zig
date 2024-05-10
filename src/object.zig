@@ -2,8 +2,35 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const environment = @import("environment.zig");
 const ArrayList = std.ArrayList;
+const AutoHashMap = std.AutoHashMap;
+const Wyhash = std.hash.Wyhash;
 
 pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, []*Object) ?*Object;
+
+pub const HashKey = struct {
+    const Self = @This();
+    type: []const u8,
+    value: u64,
+};
+
+pub const HashKeyContext = struct {
+    const Self = @This();
+    pub fn hash(_: Self, key: HashKey) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        std.hash.autoHashStrat(&hasher, key.type, .Deep);
+        std.hash.autoHashStrat(&hasher, key.value, .Deep);
+        return hasher.final();
+    }
+
+    pub fn eql(_: Self, a: HashKey, b: HashKey) bool {
+        return std.mem.eql(u8, a.type, b.type) and a.value == b.value;
+    }
+};
+
+pub const HashPair = struct {
+    key: *Object,
+    value: *Object,
+};
 
 pub const Object = union(enum) {
     const Self = @This();
@@ -21,6 +48,9 @@ pub const Object = union(enum) {
     string: []const u8,
     builtin: BuiltinFn,
     array: ArrayList(*Self),
+    hash: struct {
+        pairs: std.HashMap(HashKey, HashPair, HashKeyContext, std.hash_map.default_max_load_percentage),
+    },
     err: []const u8,
 
     // pub fn init(allocator: std.mem.Allocator) Self {
@@ -76,6 +106,29 @@ pub const Object = union(enum) {
             .string => "STRING",
             .builtin => "BUILTIN",
             .array => "ARRAY",
+            .hash => "HASH",
+        };
+    }
+
+    pub fn hashKey(self: *Self) HashKey {
+        return switch (self.*) {
+            .integer => |i| .{ .type = "INTEGER", .value = @as(u64, @intCast(i)) },
+            .boolean => |b| .{ .type = "BOOLEAN", .value = if (b) 1 else 0 },
+            .string => |s| {
+                return .{ .type = "STRING", .value = Wyhash.hash(0, s) };
+            },
+            .builtin => |b| .{ .type = "BUILTIN", .value = @intFromPtr(b) },
+            .array => |a| {
+                var hash: u64 = 0;
+                for (a.items) |item| {
+                    hash += item.hashKey().value;
+                }
+                return .{ .type = "ARRAY", .value = hash };
+            },
+            .hash => |_| {
+                return .{ .type = "HASH", .value = 0 };
+            },
+            else => .{ .type = "NULL", .value = 0 },
         };
     }
 
@@ -131,6 +184,45 @@ pub const Object = union(enum) {
                 }
                 try writer.print("]", .{});
             },
+            .hash => |h| {
+                var it = h.pairs.iterator();
+                try writer.print("{{", .{});
+                var i: usize = 0;
+                while (it.next()) |pair| {
+                    if (i > 0) {
+                        try writer.print(", ", .{});
+                    }
+                    try writer.print("{any} : {any}", .{ pair.key_ptr, pair.value_ptr });
+                    i += 1;
+                }
+                try writer.print("}}", .{});
+            },
         }
     }
 };
+
+const assert = std.debug.assert;
+const expectEqualDeep = std.testing.expectEqualDeep;
+const test_allocator = std.testing.allocator;
+test "test string hash key" {
+    var hello1: *Object = try test_allocator.create(Object);
+    defer test_allocator.destroy(hello1);
+    hello1.* = .{ .string = "Hello World" };
+
+    var hello2: *Object = try test_allocator.create(Object);
+    defer test_allocator.destroy(hello2);
+    hello2.* = .{ .string = "Hello World" };
+
+    var diff1: *Object = try test_allocator.create(Object);
+    defer test_allocator.destroy(diff1);
+    diff1.* = .{ .string = "My name is johnny" };
+
+    var diff2: *Object = try test_allocator.create(Object);
+    defer test_allocator.destroy(diff2);
+    diff2.* = .{ .string = "My name is johnny" };
+
+    try expectEqualDeep(hello1.hashKey(), hello2.hashKey());
+    try expectEqualDeep(diff1.hashKey(), diff2.hashKey());
+    assert(hello1.hashKey().value != diff1.hashKey().value);
+    assert(hello2.hashKey().value != diff2.hashKey().value);
+}
