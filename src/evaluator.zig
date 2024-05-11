@@ -13,29 +13,30 @@ const AutoHashMap = std.AutoHashMap;
 // pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, ArrayList(*object.Object)) ?object.Object;
 
 pub fn load_builtins(allocator: std.mem.Allocator) !StringHashMap(*object.Object) {
-    var builtinFns = StringHashMap(*object.Object).init(allocator);
+    const alloc = allocator;
+    var builtinFns = StringHashMap(*object.Object).init(alloc);
 
-    var lenObj = try allocator.create(object.Object);
+    const lenObj = try allocator.create(object.Object);
     lenObj.* = .{ .builtin = len };
     try builtinFns.put("len", lenObj);
 
-    var firstObj = try allocator.create(object.Object);
+    const firstObj = try allocator.create(object.Object);
     firstObj.* = .{ .builtin = first };
     try builtinFns.put("first", firstObj);
 
-    var lastObj = try allocator.create(object.Object);
+    const lastObj = try allocator.create(object.Object);
     lastObj.* = .{ .builtin = last };
     try builtinFns.put("last", lastObj);
 
-    var restObj = try allocator.create(object.Object);
+    const restObj = try allocator.create(object.Object);
     restObj.* = .{ .builtin = rest };
     try builtinFns.put("rest", restObj);
 
-    var pushObj = try allocator.create(object.Object);
+    const pushObj = try allocator.create(object.Object);
     pushObj.* = .{ .builtin = push };
     try builtinFns.put("push", pushObj);
 
-    var putsObj = try allocator.create(object.Object);
+    const putsObj = try allocator.create(object.Object);
     putsObj.* = .{ .builtin = puts };
     try builtinFns.put("puts", putsObj);
 
@@ -50,12 +51,12 @@ pub fn len(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object
     // var a: *object.Object = a[0];
     switch (args[0].*) {
         .string => |s| {
-            var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+            const obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
             obj.* = .{ .integer = @as(i64, @intCast(s.len)) };
             return obj;
         },
         .array => |arr| {
-            var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+            const obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
             obj.* = .{ .integer = @as(i64, @intCast(arr.items.len)) };
             return obj;
         },
@@ -75,7 +76,7 @@ pub fn first(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Obje
     }
 
     var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-    var arr = args[0].array;
+    const arr = args[0].array;
     if (arr.items.len > 0) {
         obj = arr.items[0];
         return obj;
@@ -95,7 +96,7 @@ pub fn last(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Objec
     }
 
     var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-    var arr = args[0].array;
+    const arr = args[0].array;
     if (arr.items.len > 0) {
         obj = arr.items[arr.items.len - 1];
         return obj;
@@ -114,8 +115,8 @@ pub fn rest(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Objec
         return new_error(allocator, "argument to `rest` must be ARRAY, got {s}", .{args[0].typeId()});
     }
 
-    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-    var arr = args[0].array;
+    const obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    const arr = args[0].array;
     if (arr.items.len > 0) {
         var newArr = ArrayList(*object.Object).init(allocator);
         for (1..arr.items.len) |i| {
@@ -138,8 +139,8 @@ pub fn push(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Objec
         return new_error(allocator, "argument to `push` must be ARRAY, got {s}", .{args[0].typeId()});
     }
 
-    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-    var arr = args[0].array;
+    const obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    const arr = args[0].array;
     var newArr = ArrayList(*object.Object).init(allocator);
     for (arr.items) |item| {
         newArr.append(item) catch unreachable;
@@ -155,7 +156,7 @@ pub fn puts(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Objec
         _ = std.io.getStdOut().write("\n") catch unreachable;
     }
 
-    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    const obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
     obj.* = .nil;
     return obj;
 }
@@ -165,7 +166,7 @@ var TRUE = object.Object{ .boolean = true };
 var FALSE = object.Object{ .boolean = false };
 
 pub fn new_error(allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) *object.Object {
-    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    const obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
     const msg = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
     obj.* = .{ .err = msg };
     return obj;
@@ -179,7 +180,8 @@ pub const Evaluator = struct {
 
     pub fn init(allocator: std.mem.Allocator) Self {
         var arena = std.heap.ArenaAllocator.init(allocator);
-        var bFuncs = load_builtins(arena.allocator()) catch std.debug.panic("failed to load builtins", .{});
+        // const arena = std.heap.ArenaAllocator.init(allocator);
+        const bFuncs = load_builtins(arena.allocator()) catch std.debug.panic("failed to load builtins", .{});
 
         return .{ .arena = arena, .builtins = bFuncs };
     }
@@ -255,11 +257,11 @@ pub const Evaluator = struct {
                 return result;
             },
             .returnStatement => |rs| {
-                var result = self.eval_expression(rs.expression, env);
+                const result = self.eval_expression(rs.expression, env);
                 if (is_error(result)) {
                     return result;
                 }
-                var obj = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .returnValue = result.? };
                 return obj;
             },
@@ -288,17 +290,17 @@ pub const Evaluator = struct {
                 return new_error(self.arena.allocator(), "identifier not found: {s}", .{i.identifier});
             },
             .integer => |i| {
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .integer = i };
                 return obj;
             },
             .boolean => |b| {
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = if (b) TRUE else FALSE;
                 return obj;
             },
             .prefix => |p| {
-                var right = self.eval_expression(p.right, env);
+                const right = self.eval_expression(p.right, env);
                 if (is_error(right)) {
                     return right;
                 }
@@ -312,11 +314,12 @@ pub const Evaluator = struct {
             .infix => |i| {
                 // std.log.warn("evaluating infix...{any}", .{i.left});
                 // std.log.warn("evaluating infix...{any}", .{i});
-                var left = self.eval_expression(i.left, env);
+                const left = self.eval_expression(i.left, env);
                 if (is_error(left)) {
                     return left;
                 }
-                var right = self.eval_expression(i.right, env);
+
+                const right = self.eval_expression(i.right, env);
                 if (is_error(right)) {
                     return right;
                 }
@@ -326,7 +329,7 @@ pub const Evaluator = struct {
                 return self.eval_if_expression(expression, env);
             },
             .functionLiteral => |fl| {
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .function = .{ .parameters = fl.parameters.clone() catch unreachable, .body = fl.body, .env = env } };
                 return obj;
             },
@@ -345,26 +348,26 @@ pub const Evaluator = struct {
             },
             .stringLiteral => |s| {
                 // std.log.warn("evaluating string literal...{s}", .{s});
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .string = self.arena.allocator().dupe(u8, s) catch unreachable };
                 return obj;
             },
             .arrayLiteral => |al| {
-                var elements = self.eval_expressions(al.elements, env);
+                const elements = self.eval_expressions(al.elements, env);
                 if (elements.items.len == 1 and is_error(elements.items[0])) {
                     return elements.items[0];
                 }
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .array = elements };
                 return obj;
             },
             .indexExpression => |ie| {
-                var left = self.eval_expression(ie.left, env);
+                const left = self.eval_expression(ie.left, env);
                 if (is_error(left)) {
                     return left;
                 }
 
-                var index = self.eval_expression(ie.index, env);
+                const index = self.eval_expression(ie.index, env);
                 if (is_error(index)) {
                     return index;
                 }
@@ -391,7 +394,7 @@ pub const Evaluator = struct {
     }
 
     fn eval_hash_index_expression(self: *Self, hash: *object.Object, index: *object.Object) ?*object.Object {
-        var key = index.hashKey();
+        const key = index.hashKey();
 
         if (std.mem.eql(u8, key.type, "NULL")) {
             return new_error(self.arena.allocator(), "unusable as hash key: {s}", .{index.typeId()});
@@ -401,16 +404,16 @@ pub const Evaluator = struct {
             return v.value;
         }
 
-        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
         obj.* = .nil;
         return obj;
     }
 
     fn eval_array_index_expression(self: *Self, obj: *object.Object, index: *object.Object) ?*object.Object {
-        var idx = index.intValue();
-        var max = obj.array.items.len - 1;
+        const idx = index.intValue();
+        const max = obj.array.items.len - 1;
         if (idx < 0 or idx > max) {
-            var nil: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+            const nil: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
             nil.* = .nil;
             return nil;
         }
@@ -421,11 +424,11 @@ pub const Evaluator = struct {
         var pairs = std.HashMap(object.HashKey, object.HashPair, object.HashKeyContext, std.hash_map.default_max_load_percentage).init(self.arena.allocator());
         var it = hl.iterator();
         while (it.next()) |pair| {
-            var key = self.eval_expression(pair.key_ptr.*, env);
+            const key = self.eval_expression(pair.key_ptr.*, env);
             if (is_error(key)) {
                 return key;
             }
-            var value = self.eval_expression(pair.value_ptr.*, env);
+            const value = self.eval_expression(pair.value_ptr.*, env);
             if (is_error(value)) {
                 return value;
             }
@@ -433,7 +436,7 @@ pub const Evaluator = struct {
             const hashPair = object.HashPair{ .key = key.?, .value = value.? };
             pairs.put(key.?.hashKey(), hashPair) catch unreachable;
         }
-        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
         obj.* = .{ .hash = .{ .pairs = pairs } };
         return obj;
     }
@@ -441,8 +444,8 @@ pub const Evaluator = struct {
     fn apply_function(self: *Self, fnObj: *object.Object, args: []*object.Object) ?*object.Object {
         switch (fnObj.*) {
             .function => |f| {
-                var extendedEnv = self.extend_function_env(fnObj, args);
-                var evaluated = self.eval_block_statement(f.body, extendedEnv);
+                const extendedEnv = self.extend_function_env(fnObj, args);
+                const evaluated = self.eval_block_statement(f.body, extendedEnv);
                 return unwrap_return_value(evaluated);
             },
             .builtin => |b| {
@@ -483,7 +486,7 @@ pub const Evaluator = struct {
     fn eval_expressions(self: *Self, exps: ArrayList(*ast.Expression), env: *environment.Environment) ArrayList(*object.Object) {
         var result = ArrayList(*object.Object).init(self.arena.allocator());
         for (exps.items) |e| {
-            var evaluated = self.eval_expression(e, env);
+            const evaluated = self.eval_expression(e, env);
             if (is_error(evaluated)) {
                 result.append(evaluated.?) catch unreachable;
                 return result;
@@ -498,7 +501,7 @@ pub const Evaluator = struct {
     fn eval_if_expression(self: *Self, ie: *ast.Expression, env: *environment.Environment) ?*object.Object {
         return switch (ie.*) {
             .ifExpression => |ifExpr| {
-                var condition = self.eval_expression(ifExpr.condition, env);
+                const condition = self.eval_expression(ifExpr.condition, env);
                 if (is_error(condition)) {
                     return condition;
                 }
@@ -508,7 +511,7 @@ pub const Evaluator = struct {
                 } else if (ifExpr.alternative) |alternative| {
                     return self.eval_block_statement(alternative, env);
                 } else {
-                    var obj = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                    const obj = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                     obj.* = .nil;
                     return obj;
                 }
@@ -557,14 +560,14 @@ pub const Evaluator = struct {
         if (!std.mem.eql(u8, operator, "+")) {
             return new_error(self.arena.allocator(), "unknown operator: {s} {s} {s}", .{ left.typeId(), operator, right.typeId() });
         }
-        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-        var str = std.fmt.allocPrint(self.arena.allocator(), "{s}{s}", .{ left.stringValue(), right.stringValue() }) catch unreachable;
+        const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        const str = std.fmt.allocPrint(self.arena.allocator(), "{s}{s}", .{ left.stringValue(), right.stringValue() }) catch unreachable;
         obj.* = .{ .string = str };
         return obj;
     }
 
     pub fn eval_boolean_infix_expression(self: *Self, operator: []const u8, left: *object.Object, right: *object.Object) ?*object.Object {
-        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
         if (std.mem.eql(u8, operator, "==")) {
             obj.* = .{ .boolean = left.boolValue() == right.boolValue() };
             return obj;
@@ -577,7 +580,7 @@ pub const Evaluator = struct {
     }
 
     pub fn eval_integer_infix_expression(self: *Self, operator: []const u8, left: *object.Object, right: *object.Object) ?*object.Object {
-        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
         if (std.mem.eql(u8, operator, "+")) {
             obj.* = .{ .integer = left.intValue() + right.intValue() };
             return obj;
@@ -620,7 +623,7 @@ pub const Evaluator = struct {
     pub fn eval_minus_prefix_operator(self: *Self, right: *object.Object) ?*object.Object {
         switch (right.*) {
             .integer => |i| {
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .integer = -i };
                 return obj;
             },
@@ -633,18 +636,18 @@ pub const Evaluator = struct {
     pub fn eval_bang_operator(self: *Self, right: *object.Object) ?*object.Object {
         switch (right.*) {
             .boolean => |b| {
-                var result = if (b) FALSE else TRUE;
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const result = if (b) FALSE else TRUE;
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = result;
                 return obj;
             },
             .nil => {
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .boolean = true };
                 return obj;
             },
             else => {
-                var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+                const obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
                 obj.* = .{ .boolean = false };
                 return obj;
             },
@@ -670,7 +673,7 @@ fn test_eval(allocator: std.mem.Allocator, evaluator: *Evaluator, input: []const
     var p = parser.Parser.init(l, allocator);
     defer p.deinit();
     var prog = p.parseProgram();
-    var node = .{ .program = &prog };
+    const node = .{ .program = &prog };
     // std.log.warn("node: {any}\n", .{node});
     // std.log.warn("evaluator: {any}\n", .{evaluator});
     var env = environment.Environment.init(test_allocator);

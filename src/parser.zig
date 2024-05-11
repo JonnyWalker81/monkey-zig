@@ -248,7 +248,7 @@ pub const Parser = struct {
     }
 
     fn parseExpressionStatement(self: *Self) *ast.Statement {
-        var stmtPtr = self.arena.allocator().create(ast.Statement) catch {
+        const stmtPtr = self.arena.allocator().create(ast.Statement) catch {
             std.debug.panic("failed to create statement", .{});
         };
         const st = self.parseExpression(.lowest);
@@ -283,11 +283,11 @@ pub const Parser = struct {
     }
 
     fn parseIndexExpression(self: *Self, left: *ast.Expression) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         self.nextToken();
-        var index = self.parseExpression(.lowest) orelse {
+        const index = self.parseExpression(.lowest) orelse {
             return exp;
         };
 
@@ -300,22 +300,22 @@ pub const Parser = struct {
     }
 
     fn parseArrayLiteral(self: *Self) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
-        var elements = self.parseExpressionList(.rbracket);
+        const elements = self.parseExpressionList(.rbracket);
         exp.* = .{ .arrayLiteral = .{ .elements = elements } };
         return exp;
     }
 
     fn parseHashLiteral(self: *Self) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         var pairs = AutoHashMap(*ast.Expression, *ast.Expression).init(self.arena.allocator());
         while (!self.peekTokenIs(.rbrace)) {
             self.nextToken();
-            var key = self.parseExpression(.lowest) orelse {
+            const key = self.parseExpression(.lowest) orelse {
                 return exp;
             };
 
@@ -324,7 +324,7 @@ pub const Parser = struct {
             }
 
             self.nextToken();
-            var value = self.parseExpression(.lowest) orelse {
+            const value = self.parseExpression(.lowest) orelse {
                 return exp;
             };
 
@@ -353,7 +353,7 @@ pub const Parser = struct {
         }
 
         self.nextToken();
-        var exp = self.parseExpression(.lowest) orelse {
+        const exp = self.parseExpression(.lowest) orelse {
             return list;
         };
         list.append(exp) catch {
@@ -363,7 +363,7 @@ pub const Parser = struct {
         while (self.peekTokenIs(.comma)) {
             self.nextToken();
             self.nextToken();
-            var e = self.parseExpression(.lowest) orelse {
+            const e = self.parseExpression(.lowest) orelse {
                 return list;
             };
             list.append(e) catch {
@@ -379,7 +379,7 @@ pub const Parser = struct {
     }
 
     fn parseStringLiteral(self: *Self) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         exp.* = .{ .stringLiteral = parseString(self.curToken) };
@@ -402,7 +402,7 @@ pub const Parser = struct {
 
         // std.log.warn("left: {s}", .{left});
 
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         const op = std.fmt.allocPrint(self.arena.allocator(), "{s}", .{operator}) catch blk: {
@@ -437,7 +437,7 @@ pub const Parser = struct {
         //     return .{ .prefix = .{ .operator = op, .right = rr } };
         // }
 
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         exp.* = .{ .prefix = .{ .operator = op, .right = rightExpr } };
@@ -446,7 +446,7 @@ pub const Parser = struct {
     }
 
     fn parseBooleanExpression(self: *Self) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         exp.* = .{ .boolean = self.curToken == .true_token };
@@ -454,12 +454,12 @@ pub const Parser = struct {
     }
 
     fn parseGroupedExpression(self: *Self) *ast.Expression {
-        var ee = self.arena.allocator().create(ast.Expression) catch {
+        const ee = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
 
         self.nextToken();
-        var exp = self.parseExpression(.lowest);
+        const exp = self.parseExpression(.lowest);
         if (exp) |e| {
             if (!self.expectPeek(.rparen)) {
                 return ee;
@@ -472,7 +472,7 @@ pub const Parser = struct {
     }
 
     fn parseIfExpression(self: *Self) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
 
@@ -481,7 +481,7 @@ pub const Parser = struct {
         }
 
         self.nextToken();
-        var condition = self.parseExpression(.lowest) orelse {
+        const condition = self.parseExpression(.lowest) orelse {
             return exp;
         };
 
@@ -493,7 +493,7 @@ pub const Parser = struct {
             return exp;
         }
 
-        var consequence = self.parseBlockStatement();
+        const consequence = self.parseBlockStatement();
 
         exp.* = .{ .ifExpression = .{ .condition = condition, .consequence = consequence, .alternative = null } };
         if (self.peekTokenIs(.else_token)) {
@@ -526,7 +526,7 @@ pub const Parser = struct {
     }
 
     fn parseFunctionLiteral(self: *Self) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
 
@@ -534,12 +534,12 @@ pub const Parser = struct {
             return exp;
         }
 
-        var parameters = self.parseFunctionParameters();
+        const parameters = self.parseFunctionParameters();
         if (!self.expectPeek(.lbrace)) {
             return exp;
         }
 
-        var body = self.parseBlockStatement();
+        const body = self.parseBlockStatement();
 
         exp.* = .{ .functionLiteral = .{ .parameters = parameters, .body = body } };
 
@@ -547,7 +547,7 @@ pub const Parser = struct {
     }
 
     fn parseCallExpression(self: *Self, function: *ast.Expression) *ast.Expression {
-        var exp = self.arena.allocator().create(ast.Expression) catch {
+        const exp = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
 
@@ -559,7 +559,7 @@ pub const Parser = struct {
     }
 
     fn parseLetStatement(self: *Self) *ast.Statement {
-        var stmt = self.arena.allocator().create(ast.Statement) catch {
+        const stmt = self.arena.allocator().create(ast.Statement) catch {
             std.debug.panic("failed to create statement", .{});
         };
 
@@ -598,7 +598,7 @@ pub const Parser = struct {
 
         self.nextToken();
 
-        var ident = self.arena.allocator().create(ast.Identifier) catch {
+        const ident = self.arena.allocator().create(ast.Identifier) catch {
             std.debug.panic("failed to create identifier", .{});
         };
         ident.* = .{ .identifier = parseIdentifier(self.curToken) };
@@ -611,7 +611,7 @@ pub const Parser = struct {
             self.nextToken();
             self.nextToken();
 
-            var i = self.arena.allocator().create(ast.Identifier) catch {
+            const i = self.arena.allocator().create(ast.Identifier) catch {
                 std.debug.panic("failed to create identifier", .{});
             };
             i.* = .{ .identifier = parseIdentifier(self.curToken) };
@@ -628,7 +628,7 @@ pub const Parser = struct {
     }
 
     fn parseReturnStatement(self: *Self) *ast.Statement {
-        var stmt = self.arena.allocator().create(ast.Statement) catch {
+        const stmt = self.arena.allocator().create(ast.Statement) catch {
             std.debug.panic("failed to create statement", .{});
         };
 
@@ -648,7 +648,7 @@ pub const Parser = struct {
     }
 
     fn parseIdentifierExpression(self: *Self) *ast.Expression {
-        var ident = self.arena.allocator().create(ast.Expression) catch {
+        const ident = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         ident.* = .{ .identifier = .{ .identifier = parseIdentifier(self.curToken) } };
@@ -671,7 +671,7 @@ pub const Parser = struct {
     }
 
     fn parseIntegerLiteral(self: *Self) *ast.Expression {
-        var int = self.arena.allocator().create(ast.Expression) catch {
+        const int = self.arena.allocator().create(ast.Expression) catch {
             std.debug.panic("failed to create expression", .{});
         };
         return switch (self.curToken) {
@@ -764,7 +764,7 @@ test "test let statement" {
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
-        var prog = p.parseProgram();
+        const prog = p.parseProgram();
         checkParserErrors(p.getErrors());
 
         // std.log.warn("{d}", .{prog.statements.items.len});
@@ -795,7 +795,7 @@ test "test return statement" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 3);
@@ -814,7 +814,7 @@ test "test identifier experssion" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -835,7 +835,7 @@ test "test integer literal experssion" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -865,7 +865,7 @@ test "test parsing prefix expressions" {
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
-        var prog = p.parseProgram();
+        const prog = p.parseProgram();
         checkParserErrors(p.getErrors());
 
         assert(prog.statements.items.len == 1);
@@ -912,7 +912,7 @@ test "test parsing infix expressions" {
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
-        var prog = p.parseProgram();
+        const prog = p.parseProgram();
         checkParserErrors(p.getErrors());
 
         assert(prog.statements.items.len == 1);
@@ -978,7 +978,7 @@ test "test operator precedence parsing" {
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
-        var prog = p.parseProgram();
+        const prog = p.parseProgram();
         checkParserErrors(p.getErrors());
 
         const actual = try std.fmt.allocPrint(test_allocator, "{s}", .{prog});
@@ -1012,7 +1012,7 @@ test "test boolean expression" {
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
-        var prog = p.parseProgram();
+        const prog = p.parseProgram();
         checkParserErrors(p.getErrors());
 
         assert(prog.statements.items.len == 1);
@@ -1034,7 +1034,7 @@ test "test if expression" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1059,7 +1059,7 @@ test "test function literal parsing" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1109,7 +1109,7 @@ test "test function parameter parsing" {
         var p = Parser.init(l, test_allocator);
         defer p.deinit();
 
-        var prog = p.parseProgram();
+        const prog = p.parseProgram();
         checkParserErrors(p.getErrors());
 
         const stmt = prog.statements.items[0];
@@ -1138,7 +1138,7 @@ test "test call experssion parsing" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1167,7 +1167,7 @@ test "test string literal expression" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1188,7 +1188,7 @@ test "test parsing array literal" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1216,7 +1216,7 @@ test "test parsing index expressions" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1240,7 +1240,7 @@ test "test parsing hash literals string keys" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1289,7 +1289,7 @@ test "test parsing empty hash literal" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);
@@ -1310,7 +1310,7 @@ test "test parsing hash literals with expressions" {
     var p = Parser.init(l, test_allocator);
     defer p.deinit();
 
-    var prog = p.parseProgram();
+    const prog = p.parseProgram();
     checkParserErrors(p.getErrors());
 
     assert(prog.statements.items.len == 1);

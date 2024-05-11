@@ -208,7 +208,7 @@ pub const BlockStatement = struct {
     statements: ArrayList(*Statement),
 
     pub fn init(allocator: std.mem.Allocator) *BlockStatement {
-        var block = allocator.create(BlockStatement) catch {
+        const block = allocator.create(BlockStatement) catch {
             std.debug.panic("Failed to allocate BlockStatement", .{});
         };
 
