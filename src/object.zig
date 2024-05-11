@@ -117,17 +117,6 @@ pub const Object = union(enum) {
             .string => |s| {
                 return .{ .type = "STRING", .value = Wyhash.hash(0, s) };
             },
-            .builtin => |b| .{ .type = "BUILTIN", .value = @intFromPtr(b) },
-            .array => |a| {
-                var hash: u64 = 0;
-                for (a.items) |item| {
-                    hash += item.hashKey().value;
-                }
-                return .{ .type = "ARRAY", .value = hash };
-            },
-            .hash => |_| {
-                return .{ .type = "HASH", .value = 0 };
-            },
             else => .{ .type = "NULL", .value = 0 },
         };
     }

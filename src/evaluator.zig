@@ -8,6 +8,7 @@ const environment = @import("environment.zig");
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
 const ArrayHashMap = std.ArrayHashMap;
+const AutoHashMap = std.AutoHashMap;
 
 // pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, ArrayList(*object.Object)) ?object.Object;
 
@@ -33,6 +34,10 @@ pub fn load_builtins(allocator: std.mem.Allocator) !StringHashMap(*object.Object
     var pushObj = try allocator.create(object.Object);
     pushObj.* = .{ .builtin = push };
     try builtinFns.put("push", pushObj);
+
+    var putsObj = try allocator.create(object.Object);
+    putsObj.* = .{ .builtin = puts };
+    try builtinFns.put("puts", putsObj);
 
     return builtinFns;
 }
@@ -141,6 +146,17 @@ pub fn push(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Objec
     }
     newArr.append(args[1]) catch unreachable;
     obj.* = .{ .array = newArr };
+    return obj;
+}
+
+pub fn puts(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
+    for (args) |arg| {
+        _ = std.io.getStdOut().write(arg.stringValue()) catch unreachable;
+        _ = std.io.getStdOut().write("\n") catch unreachable;
+    }
+
+    var obj: *object.Object = allocator.create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+    obj.* = .nil;
     return obj;
 }
 
@@ -356,7 +372,7 @@ pub const Evaluator = struct {
                 return self.eval_index_expression(left.?, index.?);
             },
             .hashLiteral => |hl| {
-                return self.eval_hash_literal(hl, env);
+                return self.eval_hash_literal(hl.pairs, env);
             },
             else => {
                 return null;
@@ -367,9 +383,27 @@ pub const Evaluator = struct {
     fn eval_index_expression(self: *Self, left: *object.Object, index: *object.Object) ?*object.Object {
         if (left.* == .array and index.* == .integer) {
             return self.eval_array_index_expression(left, index);
+        } else if (left.* == .hash) {
+            return self.eval_hash_index_expression(left, index);
         } else {
             return new_error(self.arena.allocator(), "index operator not supported: {s}", .{left.typeId()});
         }
+    }
+
+    fn eval_hash_index_expression(self: *Self, hash: *object.Object, index: *object.Object) ?*object.Object {
+        var key = index.hashKey();
+
+        if (std.mem.eql(u8, key.type, "NULL")) {
+            return new_error(self.arena.allocator(), "unusable as hash key: {s}", .{index.typeId()});
+        }
+
+        if (hash.hash.pairs.get(key)) |v| {
+            return v.value;
+        }
+
+        var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
+        obj.* = .nil;
+        return obj;
     }
 
     fn eval_array_index_expression(self: *Self, obj: *object.Object, index: *object.Object) ?*object.Object {
@@ -383,22 +417,24 @@ pub const Evaluator = struct {
         return obj.array.items[@as(usize, @intCast(idx))];
     }
 
-    fn eval_hash_literal(self: *Self, hl: *ast.Expression, env: *environment.Environment) ?*object.Object {
+    fn eval_hash_literal(self: *Self, hl: AutoHashMap(*ast.Expression, *ast.Expression), env: *environment.Environment) ?*object.Object {
         var pairs = std.HashMap(object.HashKey, object.HashPair, object.HashKeyContext, std.hash_map.default_max_load_percentage).init(self.arena.allocator());
-        var it = hl.pairs.iterator();
+        var it = hl.iterator();
         while (it.next()) |pair| {
-            var key = self.eval_expression(pair.key_ptr, env);
+            var key = self.eval_expression(pair.key_ptr.*, env);
             if (is_error(key)) {
                 return key;
             }
-            var value = self.eval_expression(pair.value_ptr, env);
+            var value = self.eval_expression(pair.value_ptr.*, env);
             if (is_error(value)) {
                 return value;
             }
-            pairs.put(key.?.hashKey(), value.?) catch unreachable;
+
+            const hashPair = object.HashPair{ .key = key.?, .value = value.? };
+            pairs.put(key.?.hashKey(), hashPair) catch unreachable;
         }
         var obj: *object.Object = self.arena.allocator().create(object.Object) catch std.debug.panic("failed to allocate object", .{});
-        obj.* = .{ .hash = pairs };
+        obj.* = .{ .hash = .{ .pairs = pairs } };
         return obj;
     }
 
@@ -842,6 +878,7 @@ test "test error handling" {
         .{ .input = "if (10 > 1) { if (10 > 1) { return true + false; } return 1; }", .expected = "unknown operator: BOOLEAN + BOOLEAN" },
         .{ .input = "foobar", .expected = "identifier not found: foobar" },
         .{ .input = "\"hello\" - \"world\"", .expected = "unknown operator: STRING - STRING" },
+        .{ .input = "{\"name\": \"Monkey\"}[fn(x) { x }];", .expected = "unusable as hash key: FUNCTION" },
     };
 
     for (tests) |t| {
@@ -1141,6 +1178,38 @@ test "test hash literals" {
         else => {
             std.debug.panic("object is not Hash. got={s}", .{o});
         },
+    }
+}
+
+test "test hash index expressions" {
+    const tests = [_]struct {
+        input: []const u8,
+        expected: val,
+    }{
+        .{ .input = "{\"foo\": 5}[\"foo\"]", .expected = .{ .integer = 5 } },
+        .{ .input = "{\"foo\": 5}[\"bar\"]", .expected = .nil },
+        .{ .input = "let key = \"foo\"; {\"foo\": 5}[key]", .expected = .{ .integer = 5 } },
+        .{ .input = "{}[\"foo\"]", .expected = .nil },
+        .{ .input = "{5: 5}[5]", .expected = .{ .integer = 5 } },
+        .{ .input = "{true: 5}[true]", .expected = .{ .integer = 5 } },
+        .{ .input = "{false: 5}[false]", .expected = .{ .integer = 5 } },
+    };
+
+    for (tests) |t| {
+        var evaluator = Evaluator.init(test_allocator);
+        const o = test_eval(test_allocator, &evaluator, t.input);
+        defer evaluator.deinit();
+        switch (t.expected) {
+            .integer => {
+                test_integer_object(o, t.expected.integer);
+            },
+            .nil => {
+                assert(o.* == .nil);
+            },
+            else => {
+                std.debug.panic("object is not Integer. got={s}", .{o});
+            },
+        }
     }
 }
 
