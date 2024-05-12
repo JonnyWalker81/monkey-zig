@@ -5,6 +5,7 @@ comptime {
     _ = @import("program.zig");
     _ = @import("object.zig");
     _ = @import("evaluator.zig");
-    _ = @import("code/code.zig");
+    _ = @import("code.zig");
+    _ = @import("compiler.zig");
     // And all other files
 }
