@@ -73,7 +73,7 @@ pub const Object = union(enum) {
     //     };
     // }
 
-    pub fn intValue(self: *Self) i64 {
+    pub fn intValue(self: *const Self) i64 {
         return switch (self.*) {
             .integer => |i| i,
             else => -1,
