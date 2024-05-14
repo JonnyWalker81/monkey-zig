@@ -6,7 +6,7 @@ const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const utils = @import("utils.zig");
 
-const Compiler = struct {
+pub const Compiler = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(u8),
@@ -28,7 +28,7 @@ const Compiler = struct {
     }
 
     pub fn compile(self: *Self, node: ast.Node) !void {
-        std.log.warn("node (compile): {any}", .{node});
+        // std.log.warn("node (compile): {any}", .{node});
         switch (node) {
             .program => |p| {
                 for (p.statements.items) |stmt| {
@@ -40,6 +40,12 @@ const Compiler = struct {
                     .infix => |ie| {
                         try self.compile(.{ .expression = ie.left });
                         try self.compile(.{ .expression = ie.right });
+
+                        if (std.mem.eql(u8, ie.operator, "+")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpAdd), &[_]usize{});
+                        } else {
+                            std.debug.print("unknown operator: {any}", .{ie.operator});
+                        }
                     },
                     .integer => |i| {
                         const integer = object.Object{ .integer = i };
@@ -50,7 +56,7 @@ const Compiler = struct {
                 }
             },
             .statement => |s| {
-                std.log.warn("{any}", .{node});
+                // std.log.warn("{any}", .{node});
                 switch (s.*) {
                     .expressionStatement => |es| {
                         try self.compile(.{ .expression = es.expression });
@@ -62,7 +68,7 @@ const Compiler = struct {
     }
 
     pub fn bytecode(self: Self) Bytecode {
-        std.log.warn("instructions (bytecode): {any}", .{self.instructions.items});
+        // std.log.warn("instructions (bytecode): {any}", .{self.instructions.items});
         return Bytecode{
             .instructions = self.instructions.items[0..],
             .constants = self.constants.items[0..],
@@ -77,7 +83,7 @@ const Compiler = struct {
     }
 
     pub fn addInstruction(self: *Self, ins: []const u8) !usize {
-        std.log.warn("ins (addIns): {any}", .{ins});
+        // std.log.warn("ins (addIns): {any}", .{ins});
         const posNewInstruction = self.instructions.items.len;
         try self.instructions.appendSlice(ins);
         return posNewInstruction;
@@ -88,7 +94,7 @@ const Compiler = struct {
         return self.constants.items.len - 1;
     }
 
-    const Bytecode = struct {
+    pub const Bytecode = struct {
         instructions: code.Instructions,
         constants: []const object.Object,
     };
@@ -105,7 +111,7 @@ const CompilerTestCase = struct {
 const test_allocator = std.testing.allocator;
 const assert = std.debug.assert;
 test "test integer arithmetic" {
-    std.log.warn("op: {any}", .{@intFromEnum(code.Constants.OpConstant)});
+    // std.log.warn("op: {any}", .{@intFromEnum(code.Constants.OpConstant)});
 
     var definitions = code.initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
@@ -116,6 +122,7 @@ test "test integer arithmetic" {
             .expectedInstructions = &[_]code.Instructions{
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
             },
         },
         // CompilerTestCase{
@@ -178,14 +185,14 @@ const Helper = struct {
 };
 
 fn parse(input: []const u8) Helper {
-    std.log.warn("input: {any}", .{input});
+    // std.log.warn("input: {any}", .{input});
     const l = lexer.Lexer.init(test_allocator, input);
     // defer l.deinit();
     var p = parser.Parser.init(l, test_allocator);
     // defer p.deinit();
     const prog = p.parseProgram();
 
-    std.log.warn("prog: {any}", .{prog});
+    // std.log.warn("prog: {any}", .{prog});
     const node = .{ .program = prog };
 
     return .{
@@ -199,8 +206,8 @@ fn testInstructions(allocator: std.mem.Allocator, expected: []const code.Instruc
     // const concatted = try concatInstructions(allocator, expected);
     const concatted = try utils.flatten(allocator, expected);
     defer allocator.free(concatted);
-    std.log.warn("concatted: {any}", .{concatted});
-    std.log.warn("actual: {any}", .{actual});
+    // std.log.warn("concatted: {any}", .{concatted});
+    // std.log.warn("actual: {any}", .{actual});
     assert(concatted.len == actual.len);
 
     for (concatted, 0..) |ins, i| {

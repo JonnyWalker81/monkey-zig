@@ -56,6 +56,9 @@ pub fn fmtInstruction(allocator: std.mem.Allocator, def: Definition, operands: [
     }
 
     switch (operandCount) {
+        0 => {
+            return try std.fmt.allocPrint(allocator, "{s}", .{def.name});
+        },
         1 => {
             // const formatted = try std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] });
             // std.log.warn("{s} {d}", .{ def.name, operands[0] });
@@ -77,6 +80,7 @@ pub const Opcode = u8;
 
 pub const Constants = enum(u8) {
     OpConstant = 0x00,
+    OpAdd = 0x01,
 };
 
 pub const Definition = struct {
@@ -98,9 +102,15 @@ pub fn initDefinitions(allocator: std.mem.Allocator) Definitions {
         .name = "OpConstant",
         .operandWidths = &[_]usize{2},
     };
-    std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
+
+    const opAdd = &Definition{
+        .name = "OpAdd",
+        .operandWidths = &[_]usize{},
+    };
+    // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
-    definitions.put(allocator, 0, opConstant) catch unreachable;
+    definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
+    definitions.put(allocator, @intFromEnum(Constants.OpAdd), opAdd) catch unreachable;
 
     return definitions;
 }
@@ -137,9 +147,9 @@ pub fn readOperands(allocator: std.mem.Allocator, def: Definition, instructions:
 
 pub fn make(allocator: std.mem.Allocator, definitions: std.AutoHashMapUnmanaged(u8, *const Definition), op: Opcode, operands: []const usize) Instructions {
     // std.log.warn("make: {d}", .{op});
-    const def = lookup(definitions, 0);
+    const def = lookup(definitions, op);
     if (def == null) {
-        std.log.warn("opcode {d} has no associated definition", .{op});
+        // std.log.warn("opcode {d} has no associated definition", .{op});
         return &[_]u8{};
     }
 
@@ -151,7 +161,8 @@ pub fn make(allocator: std.mem.Allocator, definitions: std.AutoHashMapUnmanaged(
     const instruction = allocator.alloc(u8, instructionLen) catch unreachable;
     instruction[0] = op;
 
-    std.log.warn("instructionLen: {d}", .{instructionLen});
+    // std.log.warn("instructionLen: {d}", .{instructionLen});
+    // std.log.warn("instruction (before loop): {any}", .{instruction});
 
     var offset: usize = 1;
     for (operands, 0..) |operand, i| {
@@ -161,10 +172,13 @@ pub fn make(allocator: std.mem.Allocator, definitions: std.AutoHashMapUnmanaged(
         switch (width) {
             2 => {
                 var buffer: [2]u8 = undefined;
-                std.log.warn("operand: {d}", .{operand});
+                // std.log.warn("operand: {d}", .{operand});
                 std.mem.writeInt(u16, &buffer, @intCast(operand), .big);
+                // std.log.warn("buffer: {any}", .{buffer});
                 for (buffer, 0..) |byte, j| {
-                    instruction[offset + j] = byte;
+                    const idx = offset + j;
+                    // std.log.warn("idx: {d}", .{idx});
+                    instruction[idx] = byte;
                 }
             },
             else => {
@@ -175,7 +189,7 @@ pub fn make(allocator: std.mem.Allocator, definitions: std.AutoHashMapUnmanaged(
         offset += width;
     }
 
-    std.log.warn("ins: {any}", .{instruction});
+    // std.log.warn("ins (make): {any}", .{instruction});
 
     return instruction;
 }
@@ -192,6 +206,11 @@ test "test make" {
             .op = @intFromEnum(Constants.OpConstant),
             .operands = &[_]usize{65534},
             .expected = &[_]u8{ @intFromEnum(Constants.OpConstant), 255, 254 },
+        },
+        .{
+            .op = @intFromEnum(Constants.OpAdd),
+            .operands = &[_]usize{},
+            .expected = &[_]u8{@intFromEnum(Constants.OpAdd)},
         },
     };
 
@@ -216,15 +235,15 @@ test "test instruction string" {
     defer definitions.deinit(test_allocator);
 
     const instructions = [_]Instructions{
-        make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{1}),
+        make(test_allocator, definitions, @intFromEnum(Constants.OpAdd), &[_]usize{}),
         make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{2}),
         make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{65535}),
     };
 
     const expected: []const u8 =
-        \\0000 OpConstant 1
-        \\0003 OpConstant 2
-        \\0006 OpConstant 65535
+        \\0000 OpAdd
+        \\0001 OpConstant 2
+        \\0004 OpConstant 65535
         \\
     ;
 
@@ -237,8 +256,8 @@ test "test instruction string" {
 
     const actual = try formatInstructions(test_allocator, definitions, contatted);
     defer test_allocator.free(actual);
-    std.log.warn("{s}", .{expected});
-    std.log.warn("{s}", .{actual});
+    // std.log.warn("{s}", .{expected});
+    // std.log.warn("{s}", .{actual});
     assert(std.mem.eql(u8, actual, expected));
 }
 

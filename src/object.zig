@@ -80,7 +80,7 @@ pub const Object = union(enum) {
         };
     }
 
-    pub fn boolValue(self: *Self) bool {
+    pub fn boolValue(self: *const Self) bool {
         return switch (self.*) {
             .boolean => |b| b,
             .integer => |_| true,
