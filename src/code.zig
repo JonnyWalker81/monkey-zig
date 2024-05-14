@@ -3,16 +3,74 @@ const utils = @import("utils.zig");
 
 pub const Instructions = []const u8;
 
-pub fn format(
-    self: Instructions,
-    comptime fmt: []const u8,
-    options: std.fmt.FormatOptions,
-    writer: anytype,
-) !void {
-    _ = self;
-    _ = fmt;
-    _ = options;
-    _ = writer;
+pub fn formatInstructions(allocator: std.mem.Allocator, definitions: Definitions, instructions: Instructions) ![]const u8 {
+    var out = std.ArrayList(u8).init(allocator);
+
+    var i: usize = 0;
+    while (i < instructions.len) {
+        const def = lookup(definitions, instructions[i]);
+        if (def == null) {
+            try out.writer().print("ERROR: undefined opcode: {d}", .{instructions[i]});
+            continue;
+        }
+
+        const read = try readOperands(allocator, def.?.*, instructions[i + 1 ..]);
+        defer allocator.free(read.operands);
+        // const operandCount = read.operands.len;
+        // std.fmt.allocPrint(allocator, "{d:0.4} {s}\n", .{instructions.fmtInstruction(def.?, read.operands)});
+        const f = try fmtInstruction(allocator, def.?.*, read.operands);
+        defer allocator.free(f);
+        try out.writer().print("{d:0>4} {s}\n", .{ i, f });
+        // var operands: []const u8 = undefined;
+        // for (read.operands, 0..) |operand, j| {
+        //     const fmt = try std.fmt.allocPrint(allocator, "{d}", .{operand});
+        //     if (j + 1 < operandCount) {
+        //         operands = try std.fmt.allocPrint(allocator, "{s} ", .{fmt});
+        //     } else {
+        //         operands = try std.fmt.allocPrint(allocator, "{s}", .{fmt});
+        //     }
+        // }
+
+        // const formatted = try std.fmt.allocPrint(allocator, "{d} {s}", .{ i, def.name, operands });
+        // if (i != 0) {
+        //     out = try std.fmt.allocPrint(allocator, "{s}\n", .{formatted});
+        // } else {
+        //     out = try std.fmt.allocPrint(allocator, "{s}", .{formatted});
+        // }
+
+        i += 1 + read.offset;
+    }
+
+    return out.toOwnedSlice();
+}
+
+pub fn fmtInstruction(allocator: std.mem.Allocator, def: Definition, operands: []const usize) ![]const u8 {
+    // _ = allocator;
+
+    const operandCount: usize = def.operandWidths.len;
+    if (operands.len != operandCount) {
+        // return try std.fmt.allocPrint(allocator, "ERROR: operand len {d} does not match expected {d}", .{ operands.len, operandCount });
+        // std.log.warn("ERROR: operand len {d} does not match expected {d}", .{ operands.len, operandCount });
+        return try std.fmt.allocPrint(allocator, "ERROR: operand len {d} does not match expected {d}\n", .{ operands.len, operandCount });
+        // return "foo error";
+    }
+
+    switch (operandCount) {
+        1 => {
+            // const formatted = try std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] });
+            // std.log.warn("{s} {d}", .{ def.name, operands[0] });
+            // return formatted;
+            return try std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] });
+            // return "op count...";
+        },
+        else => {},
+    }
+
+    // const formatted = try std.fmt.allocPrint(allocator, "ERROR: unhandled operandCount for {s}\n", .{def.name});
+    // std.debug.panic("ERROR: unhandled operandCount for {s}", .{def.name});
+    // return formatted;
+    return try std.fmt.allocPrint(allocator, "ERROR: unhandled operandCount for {s}\n", .{def.name});
+    // return "error unahdnled";
 }
 
 pub const Opcode = u8;
@@ -31,20 +89,20 @@ pub const ReadOperand = struct {
     offset: usize,
 };
 
-// pub var Definitions = std.AutoHashMapUnmanaged(Opcode, *const Definition){};
+pub const Definitions = std.AutoHashMapUnmanaged(Opcode, *const Definition);
 // pub var Definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
 
-pub fn initDefinitions(allocator: std.mem.Allocator) std.AutoHashMapUnmanaged(u8, *const Definition) {
-    var Definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
+pub fn initDefinitions(allocator: std.mem.Allocator) Definitions {
+    var definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
     const opConstant = &Definition{
         .name = "OpConstant",
         .operandWidths = &[_]usize{2},
     };
     std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
-    Definitions.put(allocator, 0, opConstant) catch unreachable;
+    definitions.put(allocator, 0, opConstant) catch unreachable;
 
-    return Definitions;
+    return definitions;
 }
 
 pub fn lookup(definitions: std.AutoHashMapUnmanaged(u8, *const Definition), op: Opcode) ?*const Definition {
@@ -164,15 +222,23 @@ test "test instruction string" {
     };
 
     const expected: []const u8 =
-        \\"0000 OpConstant 1",
-        \\"0003 OpConstant 2",
-        \\"0006 OpConstant 65535",
+        \\0000 OpConstant 1
+        \\0003 OpConstant 2
+        \\0006 OpConstant 65535
+        \\
     ;
 
     const contatted = try utils.flatten(test_allocator, &instructions);
     defer test_allocator.free(contatted);
 
-    const actual = try std.fmt.allocPrint(test_allocator, "{s}", .{contatted});
+    for (instructions) |ins| {
+        test_allocator.free(ins);
+    }
+
+    const actual = try formatInstructions(test_allocator, definitions, contatted);
+    defer test_allocator.free(actual);
+    std.log.warn("{s}", .{expected});
+    std.log.warn("{s}", .{actual});
     assert(std.mem.eql(u8, actual, expected));
 }
 
@@ -189,11 +255,10 @@ test "test read operands" {
         defer test_allocator.free(instruction);
 
         const def = lookup(definitions, tt.op);
-        if (def == null) {
-            std.debug.panic("Definition not found", .{});
-        }
+        assert(def != null);
 
         const read = try readOperands(test_allocator, def.?.*, instruction);
+        defer test_allocator.free(read.operands);
         assert(read.offset == tt.bytesRead);
     }
 }

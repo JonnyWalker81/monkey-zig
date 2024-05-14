@@ -205,7 +205,7 @@ pub const Evaluator = struct {
         }
     }
 
-    fn eval_program(self: *Self, prog: *program.Program, env: *environment.Environment) ?*object.Object {
+    fn eval_program(self: *Self, prog: program.Program, env: *environment.Environment) ?*object.Object {
         var result: ?*object.Object = undefined;
         for (prog.statements.items) |stmt| {
             // std.log.warn("(before) env: {any} {d}", .{ env, &env });
@@ -672,8 +672,8 @@ fn test_eval(allocator: std.mem.Allocator, evaluator: *Evaluator, input: []const
 
     var p = parser.Parser.init(l, allocator);
     defer p.deinit();
-    var prog = p.parseProgram();
-    const node = .{ .program = &prog };
+    const prog = p.parseProgram();
+    const node = .{ .program = prog };
     // std.log.warn("node: {any}\n", .{node});
     // std.log.warn("evaluator: {any}\n", .{evaluator});
     var env = environment.Environment.init(test_allocator);

@@ -9,7 +9,7 @@ pub const Node = union(enum) {
 
     statement: *Statement,
     expression: *Expression,
-    program: *program.Program,
+    program: program.Program,
 };
 
 pub const Expression = union(enum) {
