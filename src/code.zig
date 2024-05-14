@@ -81,6 +81,7 @@ pub const Opcode = u8;
 pub const Constants = enum(u8) {
     OpConstant = 0x00,
     OpAdd = 0x01,
+    OpPop = 0x02,
 };
 
 pub const Definition = struct {
@@ -96,7 +97,7 @@ pub const ReadOperand = struct {
 pub const Definitions = std.AutoHashMapUnmanaged(Opcode, *const Definition);
 // pub var Definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
 
-pub fn initDefinitions(allocator: std.mem.Allocator) Definitions {
+pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     var definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
     const opConstant = &Definition{
         .name = "OpConstant",
@@ -107,10 +108,16 @@ pub fn initDefinitions(allocator: std.mem.Allocator) Definitions {
         .name = "OpAdd",
         .operandWidths = &[_]usize{},
     };
+
+    const opPop = &Definition{
+        .name = "OpPop",
+        .operandWidths = &[_]usize{},
+    };
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
-    definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
-    definitions.put(allocator, @intFromEnum(Constants.OpAdd), opAdd) catch unreachable;
+    try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
+    try definitions.put(allocator, @intFromEnum(Constants.OpAdd), opAdd);
+    try definitions.put(allocator, @intFromEnum(Constants.OpPop), opPop);
 
     return definitions;
 }
@@ -214,7 +221,7 @@ test "test make" {
         },
     };
 
-    var definitions = initDefinitions(test_allocator);
+    var definitions = try initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
 
     for (tests) |tt| {
@@ -231,7 +238,7 @@ test "test make" {
 }
 
 test "test instruction string" {
-    var definitions = initDefinitions(test_allocator);
+    var definitions = try initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
 
     const instructions = [_]Instructions{
@@ -266,7 +273,7 @@ test "test read operands" {
         .{ .op = @intFromEnum(Constants.OpConstant), .operands = &[_]usize{65535}, .bytesRead = 2 },
     };
 
-    var definitions = initDefinitions(test_allocator);
+    var definitions = try initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
 
     for (tests) |tt| {

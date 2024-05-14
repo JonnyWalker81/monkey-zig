@@ -4,6 +4,9 @@ const parser = @import("parser.zig");
 const evaluator = @import("evaluator.zig");
 const ArrayList = std.ArrayList;
 const environment = @import("environment.zig");
+const code = @import("code.zig");
+const compiler = @import("compiler.zig");
+const vm = @import("vm.zig");
 
 // monkey face in zig multi-line string constant
 const monkeyFace =
@@ -34,6 +37,9 @@ fn start() !void {
     var arena = std.heap.ArenaAllocator.init(gpa.allocator());
     defer arena.deinit();
 
+    var definitions = try code.initDefinitions(arena.allocator());
+    defer definitions.deinit(arena.allocator());
+
     var env = environment.Environment.init(arena.allocator());
     defer env.deinit();
     while (true) {
@@ -43,7 +49,7 @@ fn start() !void {
         try bw.flush();
 
         var line_buf: [4096]u8 = undefined;
-        var line = try r.readUntilDelimiterOrEof(&line_buf, '\n');
+        const line = try r.readUntilDelimiterOrEof(&line_buf, '\n');
 
         if (line) |input| {
             var l = lexer.Lexer.init(arena.allocator(), input);
@@ -52,23 +58,32 @@ fn start() !void {
             var p = parser.Parser.init(l, arena.allocator());
             defer p.deinit();
 
-            var program = p.parseProgram();
+            const program = p.parseProgram();
 
             if (p.errors.items.len > 0) {
                 printParserErrors(p.errors);
                 continue;
             }
 
-            var node = .{ .program = &program };
+            const node = .{ .program = program };
 
-            var e = evaluator.Evaluator.init(arena.allocator());
-            defer e.deinit();
+            var comp = compiler.Compiler.init(arena.allocator(), definitions);
+            try comp.compile(node);
 
-            var evaluated = e.eval(node, env);
+            var machine = vm.VM.init(arena.allocator(), comp.bytecode());
+            try machine.run();
 
-            if (evaluated) |result| {
-                try stdout.print("{s}\n", .{result});
-            }
+            const lastPopped = machine.lastPoppedStackElem();
+            try stdout.print("{s}\n", .{lastPopped});
+
+            // var e = evaluator.Evaluator.init(arena.allocator());
+            // defer e.deinit();
+
+            // const evaluated = e.eval(node, env);
+
+            // if (evaluated) |result| {
+            //     try stdout.print("{s}\n", .{result});
+            // }
         }
     }
 }
@@ -84,7 +99,7 @@ fn printParserErrors(errors: ArrayList([]u8)) void {
 
 pub fn main() !void {
     // const allocator = std.heap.page_allocator();
-    if (std.os.getenv("USER")) |user| {
+    if (std.posix.getenv("USER")) |user| {
         // Successfully retrieved the variable
         std.debug.print("Hello {s}! This is the Monkey Programming Language!\n", .{user});
         std.debug.print("Feel free to type in commands\n", .{});

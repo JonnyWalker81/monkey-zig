@@ -8,7 +8,7 @@ const compiler = @import("compiler.zig");
 
 const StackSize = 2048;
 
-const VM = struct {
+pub const VM = struct {
     const Self = @This();
 
     allocator: std.mem.Allocator,
@@ -72,10 +72,17 @@ const VM = struct {
                     const result = object.Object{ .integer = left.intValue() + right.intValue() };
                     try self.push(result);
                 },
+                .OpPop => {
+                    _ = self.pop();
+                },
             }
 
             ip += 1;
         }
+    }
+
+    pub fn lastPoppedStackElem(self: *Self) object.Object {
+        return self.stack[self.sp];
     }
 
     pub fn push(self: *Self, obj: object.Object) !void {
@@ -113,7 +120,7 @@ test "test integer arithmetic" {
 }
 
 pub fn runTests(tests: []const vmTestCase) !void {
-    var definitions = code.initDefinitions(test_allocator);
+    var definitions = try code.initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
 
     for (tests) |tt| {
@@ -126,7 +133,7 @@ pub fn runTests(tests: []const vmTestCase) !void {
 
         var vm = VM.init(test_allocator, comp.bytecode());
         try vm.run();
-        const stackElem = vm.stackTop();
+        const stackElem = vm.lastPoppedStackElem();
         testExpectedObject(tt.expected, stackElem);
     }
 }

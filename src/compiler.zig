@@ -60,6 +60,7 @@ pub const Compiler = struct {
                 switch (s.*) {
                     .expressionStatement => |es| {
                         try self.compile(.{ .expression = es.expression });
+                        _ = try self.emit(@intFromEnum(code.Constants.OpPop), &[_]usize{});
                     },
                     else => {},
                 }
@@ -113,30 +114,35 @@ const assert = std.debug.assert;
 test "test integer arithmetic" {
     // std.log.warn("op: {any}", .{@intFromEnum(code.Constants.OpConstant)});
 
-    var definitions = code.initDefinitions(test_allocator);
+    var definitions = try code.initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
     const tests = &[_]CompilerTestCase{
         CompilerTestCase{
             .input = "1 + 2",
-            .expectedConstants = &[_]val{ .{ .int = 1 }, .{ .int = 2 } },
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
             .expectedInstructions = &[_]code.Instructions{
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
             },
         },
-        // CompilerTestCase{
-        //     .input = "1; 2",
-        //     .expectedConstants = val{
-        //         .int = 1,
-        //     },
-        //     .expectedInstructions = &[_]code.Instruction{
-        //         code.OpConstant{.index = 0},
-        //         code.OpPop{},
-        //         code.OpConstant{.index = 1},
-        //         code.OpPop{},
-        //     },
-        // },
+        CompilerTestCase{
+            .input = "1; 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
     };
 
     try runCompilerTests(tests, definitions);
