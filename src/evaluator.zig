@@ -202,6 +202,9 @@ pub const Evaluator = struct {
             .statement => |s| {
                 return self.eval_statement(s, env);
             },
+            .blockStatement => |bs| {
+                return self.eval_block_statement(bs, env);
+            },
         }
     }
 

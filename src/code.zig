@@ -16,27 +16,10 @@ pub fn formatInstructions(allocator: std.mem.Allocator, definitions: Definitions
 
         const read = try readOperands(allocator, def.?.*, instructions[i + 1 ..]);
         defer allocator.free(read.operands);
-        // const operandCount = read.operands.len;
-        // std.fmt.allocPrint(allocator, "{d:0.4} {s}\n", .{instructions.fmtInstruction(def.?, read.operands)});
+
         const f = try fmtInstruction(allocator, def.?.*, read.operands);
         defer allocator.free(f);
         try out.writer().print("{d:0>4} {s}\n", .{ i, f });
-        // var operands: []const u8 = undefined;
-        // for (read.operands, 0..) |operand, j| {
-        //     const fmt = try std.fmt.allocPrint(allocator, "{d}", .{operand});
-        //     if (j + 1 < operandCount) {
-        //         operands = try std.fmt.allocPrint(allocator, "{s} ", .{fmt});
-        //     } else {
-        //         operands = try std.fmt.allocPrint(allocator, "{s}", .{fmt});
-        //     }
-        // }
-
-        // const formatted = try std.fmt.allocPrint(allocator, "{d} {s}", .{ i, def.name, operands });
-        // if (i != 0) {
-        //     out = try std.fmt.allocPrint(allocator, "{s}\n", .{formatted});
-        // } else {
-        //     out = try std.fmt.allocPrint(allocator, "{s}", .{formatted});
-        // }
 
         i += 1 + read.offset;
     }
@@ -45,14 +28,9 @@ pub fn formatInstructions(allocator: std.mem.Allocator, definitions: Definitions
 }
 
 pub fn fmtInstruction(allocator: std.mem.Allocator, def: Definition, operands: []const usize) ![]const u8 {
-    // _ = allocator;
-
     const operandCount: usize = def.operandWidths.len;
     if (operands.len != operandCount) {
-        // return try std.fmt.allocPrint(allocator, "ERROR: operand len {d} does not match expected {d}", .{ operands.len, operandCount });
-        // std.log.warn("ERROR: operand len {d} does not match expected {d}", .{ operands.len, operandCount });
         return try std.fmt.allocPrint(allocator, "ERROR: operand len {d} does not match expected {d}\n", .{ operands.len, operandCount });
-        // return "foo error";
     }
 
     switch (operandCount) {
@@ -60,20 +38,12 @@ pub fn fmtInstruction(allocator: std.mem.Allocator, def: Definition, operands: [
             return try std.fmt.allocPrint(allocator, "{s}", .{def.name});
         },
         1 => {
-            // const formatted = try std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] });
-            // std.log.warn("{s} {d}", .{ def.name, operands[0] });
-            // return formatted;
             return try std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] });
-            // return "op count...";
         },
         else => {},
     }
 
-    // const formatted = try std.fmt.allocPrint(allocator, "ERROR: unhandled operandCount for {s}\n", .{def.name});
-    // std.debug.panic("ERROR: unhandled operandCount for {s}", .{def.name});
-    // return formatted;
     return try std.fmt.allocPrint(allocator, "ERROR: unhandled operandCount for {s}\n", .{def.name});
-    // return "error unahdnled";
 }
 
 pub const Opcode = u8;
@@ -82,6 +52,19 @@ pub const Constants = enum(u8) {
     OpConstant = 0x00,
     OpAdd = 0x01,
     OpPop = 0x02,
+    OpSub = 0x03,
+    OpMul = 0x04,
+    OpDiv = 0x05,
+    OpTrue = 0x06,
+    OpFalse = 0x07,
+    OpEqual = 0x08,
+    OpNotEqual = 0x09,
+    OpGreaterThan = 0x0a,
+    OpMinus = 0x0b,
+    OpBang = 0x0c,
+    OpJumpNotTruthy = 0x0d,
+    OpJump = 0x0e,
+    OpNull = 0x0f,
 };
 
 pub const Definition = struct {
@@ -95,7 +78,6 @@ pub const ReadOperand = struct {
 };
 
 pub const Definitions = std.AutoHashMapUnmanaged(Opcode, *const Definition);
-// pub var Definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
 
 pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     var definitions = std.AutoHashMapUnmanaged(u8, *const Definition){};
@@ -113,11 +95,90 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .name = "OpPop",
         .operandWidths = &[_]usize{},
     };
+
+    const opSub = &Definition{
+        .name = "OpSub",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opMul = &Definition{
+        .name = "OpMul",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opDiv = &Definition{
+        .name = "OpDiv",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opTrue = &Definition{
+        .name = "OpTrue",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opFalse = &Definition{
+        .name = "OpFalse",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opEqual = &Definition{
+        .name = "OpEqual",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opNotEqual = &Definition{
+        .name = "OpNotEqual",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opGreaterThan = &Definition{
+        .name = "OpGreaterThan",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opMinus = &Definition{
+        .name = "OpMinus",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opBang = &Definition{
+        .name = "OpBang",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opJumpNotTruthy = &Definition{
+        .name = "OpJumpNotTruthy",
+        .operandWidths = &[_]usize{2},
+    };
+
+    const opJump = &Definition{
+        .name = "OpJump",
+        .operandWidths = &[_]usize{2},
+    };
+
+    const opNull = &Definition{
+        .name = "OpNull",
+        .operandWidths = &[_]usize{},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
     try definitions.put(allocator, @intFromEnum(Constants.OpAdd), opAdd);
     try definitions.put(allocator, @intFromEnum(Constants.OpPop), opPop);
+    try definitions.put(allocator, @intFromEnum(Constants.OpSub), opSub);
+    try definitions.put(allocator, @intFromEnum(Constants.OpMul), opMul);
+    try definitions.put(allocator, @intFromEnum(Constants.OpDiv), opDiv);
+    try definitions.put(allocator, @intFromEnum(Constants.OpTrue), opTrue);
+    try definitions.put(allocator, @intFromEnum(Constants.OpFalse), opFalse);
+    try definitions.put(allocator, @intFromEnum(Constants.OpEqual), opEqual);
+    try definitions.put(allocator, @intFromEnum(Constants.OpNotEqual), opNotEqual);
+    try definitions.put(allocator, @intFromEnum(Constants.OpGreaterThan), opGreaterThan);
+    try definitions.put(allocator, @intFromEnum(Constants.OpMinus), opMinus);
+    try definitions.put(allocator, @intFromEnum(Constants.OpBang), opBang);
+    try definitions.put(allocator, @intFromEnum(Constants.OpJumpNotTruthy), opJumpNotTruthy);
+    try definitions.put(allocator, @intFromEnum(Constants.OpJump), opJump);
+    try definitions.put(allocator, @intFromEnum(Constants.OpNull), opNull);
 
     return definitions;
 }

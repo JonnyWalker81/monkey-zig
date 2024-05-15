@@ -8,6 +8,10 @@ const compiler = @import("compiler.zig");
 
 const StackSize = 2048;
 
+const True = object.Object{ .boolean = true };
+const False = object.Object{ .boolean = false };
+const Null: object.Object = .nil;
+
 pub const VM = struct {
     const Self = @This();
 
@@ -55,30 +59,182 @@ pub const VM = struct {
 
             switch (op) {
                 .OpConstant => {
-                    var buf: [2]u8 = undefined;
-                    const start = ip + 1;
+                    // var buf: [2]u8 = undefined;
+                    // const start = ip + 1;
                     // std.log.warn("start: {d}", .{start});
                     // std.log.warn("instructions: {d}", .{self.instructions});
-                    @memcpy(&buf, self.instructions[start .. start + 2]);
-                    const constIndex = std.mem.readInt(u16, &buf, .big);
+                    // @memcpy(&buf, self.instructions[start .. start + 2]);
+                    // const constIndex = std.mem.readInt(u16, &buf, .big);
+                    const constIndex = readUint16(self.instructions, ip + 1);
                     ip += 2;
 
                     const obj = self.constants[constIndex];
                     try self.push(obj);
                 },
-                .OpAdd => {
-                    const right = self.pop();
-                    const left = self.pop();
-                    const result = object.Object{ .integer = left.intValue() + right.intValue() };
-                    try self.push(result);
+                .OpAdd, .OpSub, .OpMul, .OpDiv => {
+                    try self.executeBinaryOperation(op);
+                },
+                .OpTrue => {
+                    try self.push(True);
+                },
+                .OpFalse => {
+                    try self.push(False);
+                },
+                .OpEqual, .OpNotEqual, .OpGreaterThan => {
+                    try self.executeComparison(op);
+                },
+                .OpBang => {
+                    try self.executeBangOperator();
+                },
+                .OpMinus => {
+                    try self.executeMinusOperator();
                 },
                 .OpPop => {
                     _ = self.pop();
+                },
+                .OpJumpNotTruthy => {
+                    const pos = readUint16(self.instructions, ip + 1);
+                    ip += 2;
+
+                    const condition = self.pop();
+                    if (!condition.boolValue()) {
+                        ip = pos - 1;
+                    }
+                },
+                .OpJump => {
+                    // var buf: [2]u8 = undefined;
+                    // @memcpy(&buf, self.instructions[ip + 1 .. ip + 3]);
+                    // const pos = std.mem.readInt(u16, &buf, .big);
+                    const pos = readUint16(self.instructions, ip + 1);
+                    ip = pos - 1;
+                },
+                .OpNull => {
+                    try self.push(Null);
                 },
             }
 
             ip += 1;
         }
+    }
+
+    fn readUint16(s: []const u8, ip: usize) u16 {
+        var buf: [2]u8 = undefined;
+        @memcpy(&buf, s[ip .. ip + 2]);
+        return std.mem.readInt(u16, &buf, .big);
+    }
+
+    fn executeMinusOperator(self: *Self) !void {
+        const operand = self.pop();
+
+        if (operand != .integer) {
+            return std.debug.panic("unsupported type for negation: {s}", .{operand.typeId()});
+        }
+
+        const value = operand.intValue();
+        try self.push(object.Object{ .integer = -value });
+    }
+
+    fn executeBangOperator(self: *Self) !void {
+        const operand = self.pop();
+
+        switch (operand) {
+            .boolean => {
+                switch (operand.boolValue()) {
+                    true => {
+                        try self.push(False);
+                    },
+                    false => {
+                        try self.push(True);
+                    },
+                }
+            },
+            .nil => {
+                try self.push(True);
+            },
+            else => {
+                try self.push(False);
+            },
+        }
+    }
+
+    fn executeComparison(self: *Self, op: code.Constants) !void {
+        const right = self.pop();
+        const left = self.pop();
+
+        if (left == .integer and right == .integer) {
+            return try self.executeIntegerComparison(op, left, right);
+        }
+
+        switch (op) {
+            .OpEqual => {
+                try self.push(if (left.boolValue() == right.boolValue()) True else False);
+            },
+            .OpNotEqual => {
+                try self.push(if (left.boolValue() != right.boolValue()) True else False);
+            },
+            else => {
+                return std.debug.panic("unsupported operator: {any} {s} {s}", .{ op, right.typeId(), left.typeId() });
+            },
+        }
+
+        return;
+    }
+
+    fn executeIntegerComparison(self: *Self, op: code.Constants, left: object.Object, right: object.Object) !void {
+        const leftVal = left.intValue();
+        const rightVal = right.intValue();
+
+        switch (op) {
+            .OpEqual => {
+                try self.push(if (leftVal == rightVal) True else False);
+            },
+            .OpNotEqual => {
+                try self.push(if (leftVal != rightVal) True else False);
+            },
+            .OpGreaterThan => {
+                try self.push(if (leftVal > rightVal) True else False);
+            },
+            else => {
+                return std.debug.panic("unknown integer operator: {any}", .{op});
+            },
+        }
+    }
+
+    fn executeBinaryOperation(self: *Self, op: code.Constants) !void {
+        const right = self.pop();
+        const left = self.pop();
+
+        if (left == .integer and right == .integer) {
+            return try self.executeBinaryIntegerOperation(op, left, right);
+        }
+
+        return std.debug.panic("unsupported types for binary operation: {s} {s}", .{ right.typeId(), left.typeId() });
+    }
+
+    fn executeBinaryIntegerOperation(self: *Self, op: code.Constants, left: object.Object, right: object.Object) !void {
+        const leftVal = left.intValue();
+        const rightVal = right.intValue();
+
+        var result: object.Object = undefined;
+        switch (op) {
+            .OpAdd => {
+                result = object.Object{ .integer = leftVal + rightVal };
+            },
+            .OpSub => {
+                result = object.Object{ .integer = leftVal - rightVal };
+            },
+            .OpMul => {
+                result = object.Object{ .integer = leftVal * rightVal };
+            },
+            .OpDiv => {
+                result = object.Object{ .integer = @divExact(leftVal, rightVal) };
+            },
+            else => {
+                return std.debug.panic("unknown integer operator: {any}", .{op});
+            },
+        }
+
+        try self.push(result);
     }
 
     pub fn lastPoppedStackElem(self: *Self) object.Object {
@@ -99,7 +255,7 @@ const assert = std.debug.assert;
 const test_allocator = std.testing.allocator;
 
 const ExpectedValue = union(enum) {
-    integer: usize,
+    integer: i32,
     boolean: bool,
     nil,
 };
@@ -114,6 +270,69 @@ test "test integer arithmetic" {
         .{ .input = "1", .expected = .{ .integer = 1 } },
         .{ .input = "2", .expected = .{ .integer = 2 } },
         .{ .input = "1 + 2", .expected = .{ .integer = 3 } },
+        .{ .input = "1 - 2", .expected = .{ .integer = -1 } },
+        .{ .input = "1 * 2", .expected = .{ .integer = 2 } },
+        .{ .input = "4 / 2", .expected = .{ .integer = 2 } },
+        .{ .input = "50 / 2 * 2 + 10 - 5", .expected = .{ .integer = 55 } },
+        .{ .input = "5 + 5 + 5 + 5 - 10", .expected = .{ .integer = 10 } },
+        .{ .input = "2 * 2 * 2 * 2 * 2", .expected = .{ .integer = 32 } },
+        .{ .input = "5 * 2 + 10", .expected = .{ .integer = 20 } },
+        .{ .input = "5 + 2 * 10", .expected = .{ .integer = 25 } },
+        .{ .input = "5 * (2 + 10)", .expected = .{ .integer = 60 } },
+        .{ .input = "-5", .expected = .{ .integer = -5 } },
+        .{ .input = "-10", .expected = .{ .integer = -10 } },
+        .{ .input = "-50 + 100 + -50", .expected = .{ .integer = 0 } },
+        .{ .input = "(5 + 10 * 2 + 15 / 3) * 2 + -10", .expected = .{ .integer = 50 } },
+    };
+
+    try runTests(tests);
+}
+
+test "test boolean expressions" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "true", .expected = .{ .boolean = true } },
+        .{ .input = "false", .expected = .{ .boolean = false } },
+        .{ .input = "1 < 2", .expected = .{ .boolean = true } },
+        .{ .input = "1 > 2", .expected = .{ .boolean = false } },
+        .{ .input = "1 < 1", .expected = .{ .boolean = false } },
+        .{ .input = "1 > 1", .expected = .{ .boolean = false } },
+        .{ .input = "1 == 1", .expected = .{ .boolean = true } },
+        .{ .input = "1 != 1", .expected = .{ .boolean = false } },
+        .{ .input = "1 == 2", .expected = .{ .boolean = false } },
+        .{ .input = "1 != 2", .expected = .{ .boolean = true } },
+        .{ .input = "true == true", .expected = .{ .boolean = true } },
+        .{ .input = "false == false", .expected = .{ .boolean = true } },
+        .{ .input = "true == false", .expected = .{ .boolean = false } },
+        .{ .input = "true != false", .expected = .{ .boolean = true } },
+        .{ .input = "false != true", .expected = .{ .boolean = true } },
+        .{ .input = "(1 < 2) == true", .expected = .{ .boolean = true } },
+        .{ .input = "(1 < 2) == false", .expected = .{ .boolean = false } },
+        .{ .input = "(1 > 2) == true", .expected = .{ .boolean = false } },
+        .{ .input = "(1 > 2) == false", .expected = .{ .boolean = true } },
+        .{ .input = "!true", .expected = .{ .boolean = false } },
+        .{ .input = "!false", .expected = .{ .boolean = true } },
+        .{ .input = "!5", .expected = .{ .boolean = false } },
+        .{ .input = "!!true", .expected = .{ .boolean = true } },
+        .{ .input = "!!false", .expected = .{ .boolean = false } },
+        .{ .input = "!!5", .expected = .{ .boolean = true } },
+        .{ .input = "!(if (false) { 5 })", .expected = .{ .boolean = true } },
+    };
+
+    try runTests(tests);
+}
+
+test "test conditionals" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "if (true) { 10 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (true) { 10 } else { 20 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (false) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
+        .{ .input = "if (1) { 10 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (1 < 2) { 10 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (1 < 2) { 10 } else { 20 }", .expected = .{ .integer = 10 } },
+        .{ .input = "if (1 > 2) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
+        .{ .input = "if (1 > 2) { 10 }", .expected = .nil },
+        .{ .input = "if (false) { 10 }", .expected = .nil },
+        .{ .input = "if ((if (false) { 10 })) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
     };
 
     try runTests(tests);

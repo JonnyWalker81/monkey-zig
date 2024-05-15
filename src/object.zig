@@ -95,7 +95,7 @@ pub const Object = union(enum) {
         };
     }
 
-    pub fn typeId(self: *Self) []const u8 {
+    pub fn typeId(self: *const Self) []const u8 {
         return switch (self.*) {
             .nil => "NULL",
             .integer => "INTEGER",

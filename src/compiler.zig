@@ -6,12 +6,26 @@ const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const utils = @import("utils.zig");
 
+const EmittedInstruction = struct {
+    opcode: code.Opcode,
+    position: usize,
+
+    pub fn init(opcode: code.Opcode, position: usize) EmittedInstruction {
+        return EmittedInstruction{
+            .opcode = opcode,
+            .position = position,
+        };
+    }
+};
+
 pub const Compiler = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(u8),
     constants: std.ArrayList(object.Object),
     definitions: code.Definitions,
+    lastInstruction: EmittedInstruction,
+    previousInstruction: EmittedInstruction,
 
     pub fn init(allocator: std.mem.Allocator, definitions: code.Definitions) Compiler {
         return Compiler{
@@ -19,6 +33,8 @@ pub const Compiler = struct {
             .instructions = std.ArrayList(u8).init(allocator),
             .constants = std.ArrayList(object.Object).init(allocator),
             .definitions = definitions,
+            .lastInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
+            .previousInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
         };
     }
 
@@ -38,19 +54,83 @@ pub const Compiler = struct {
             .expression => |e| {
                 switch (e.*) {
                     .infix => |ie| {
+                        if (std.mem.eql(u8, ie.operator, "<")) {
+                            try self.compile(.{ .expression = ie.right });
+                            try self.compile(.{ .expression = ie.left });
+                            _ = try self.emit(@intFromEnum(code.Constants.OpGreaterThan), &[_]usize{});
+                            return;
+                        }
+
                         try self.compile(.{ .expression = ie.left });
                         try self.compile(.{ .expression = ie.right });
 
                         if (std.mem.eql(u8, ie.operator, "+")) {
                             _ = try self.emit(@intFromEnum(code.Constants.OpAdd), &[_]usize{});
+                        } else if (std.mem.eql(u8, ie.operator, "-")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpSub), &[_]usize{});
+                        } else if (std.mem.eql(u8, ie.operator, "*")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpMul), &[_]usize{});
+                        } else if (std.mem.eql(u8, ie.operator, "/")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpDiv), &[_]usize{});
+                        } else if (std.mem.eql(u8, ie.operator, ">")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpGreaterThan), &[_]usize{});
+                        } else if (std.mem.eql(u8, ie.operator, "==")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpEqual), &[_]usize{});
+                        } else if (std.mem.eql(u8, ie.operator, "!=")) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpNotEqual), &[_]usize{});
                         } else {
                             std.debug.print("unknown operator: {any}", .{ie.operator});
+                        }
+                    },
+                    .prefix => |pe| {
+                        if (std.mem.eql(u8, pe.operator, "-")) {
+                            try self.compile(.{ .expression = pe.right });
+                            _ = try self.emit(@intFromEnum(code.Constants.OpMinus), &[_]usize{});
+                        } else if (std.mem.eql(u8, pe.operator, "!")) {
+                            try self.compile(.{ .expression = pe.right });
+                            _ = try self.emit(@intFromEnum(code.Constants.OpBang), &[_]usize{});
                         }
                     },
                     .integer => |i| {
                         const integer = object.Object{ .integer = i };
                         const c = try self.addConstant(integer);
                         _ = try self.emit(@intFromEnum(code.Constants.OpConstant), &[_]usize{c});
+                    },
+                    .boolean => |b| {
+                        if (b) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpTrue), &[_]usize{});
+                        } else {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpFalse), &[_]usize{});
+                        }
+                    },
+                    .ifExpression => |ie| {
+                        try self.compile(.{ .expression = ie.condition });
+
+                        const jumpNotTruthyPos = try self.emit(@intFromEnum(code.Constants.OpJumpNotTruthy), &[_]usize{9999});
+
+                        try self.compile(.{ .blockStatement = ie.consequence });
+
+                        if (self.lastInstructionIsPop()) {
+                            self.removeLastPop();
+                        }
+
+                        const jumpPos = try self.emit(@intFromEnum(code.Constants.OpJump), &[_]usize{9999});
+
+                        const afterConsequencePos = self.instructions.items.len;
+                        _ = try self.changeOperand(jumpNotTruthyPos, afterConsequencePos);
+
+                        if (ie.alternative) |alternative| {
+                            try self.compile(.{ .blockStatement = alternative });
+
+                            if (self.lastInstructionIsPop()) {
+                                self.removeLastPop();
+                            }
+                        } else {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpNull), &[_]usize{});
+                        }
+
+                        const afterAlternativePos = self.instructions.items.len;
+                        _ = try self.changeOperand(jumpPos, afterAlternativePos);
                     },
                     else => {},
                 }
@@ -62,10 +142,40 @@ pub const Compiler = struct {
                         try self.compile(.{ .expression = es.expression });
                         _ = try self.emit(@intFromEnum(code.Constants.OpPop), &[_]usize{});
                     },
+
                     else => {},
                 }
             },
+            .blockStatement => |bs| {
+                for (bs.statements.items) |stmt| {
+                    try self.compile(.{ .statement = stmt });
+                }
+            },
         }
+    }
+
+    fn replaceInstruction(self: *Self, pos: usize, newInstruction: []const u8) !void {
+        var i: usize = 0;
+        while (i < newInstruction.len) : (i += 1) {
+            self.instructions.items[pos + i] = newInstruction[i];
+        }
+    }
+
+    fn changeOperand(self: *Self, pos: usize, operand: usize) !void {
+        const op = self.instructions.items[pos];
+        const newInstruction = code.make(self.allocator, self.definitions, op, &[_]usize{operand});
+        defer self.allocator.free(newInstruction);
+
+        return self.replaceInstruction(pos, newInstruction);
+    }
+
+    fn lastInstructionIsPop(self: Self) bool {
+        return self.lastInstruction.opcode == @intFromEnum(code.Constants.OpPop);
+    }
+
+    fn removeLastPop(self: *Self) void {
+        _ = self.instructions.pop();
+        self.lastInstruction = self.previousInstruction;
     }
 
     pub fn bytecode(self: Self) Bytecode {
@@ -80,7 +190,17 @@ pub const Compiler = struct {
         const ins = code.make(self.allocator, self.definitions, op, operands);
         defer self.allocator.free(ins);
         const pos = try self.addInstruction(ins);
+        self.setLastInstruction(op, pos);
+
         return pos;
+    }
+
+    fn setLastInstruction(self: *Self, op: code.Opcode, pos: usize) void {
+        const previous = self.lastInstruction;
+        const last = EmittedInstruction.init(op, pos);
+
+        self.previousInstruction = previous;
+        self.lastInstruction = last;
     }
 
     pub fn addInstruction(self: *Self, ins: []const u8) !usize {
@@ -140,6 +260,226 @@ test "test integer arithmetic" {
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "1 - 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpSub), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "1 * 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpMul), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "2 / 1",
+            .expectedConstants = &[_]val{
+                .{ .int = 2 },
+                .{ .int = 1 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpDiv), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "-1",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpMinus), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+    }
+}
+
+test "test boolean expressions" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "true",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpTrue), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "false",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpFalse), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "1 > 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGreaterThan), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "1 < 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 2 },
+                .{ .int = 1 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGreaterThan), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "1 == 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpEqual), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "1 != 2",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpNotEqual), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "true == false",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpTrue), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpFalse), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpEqual), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "true != false",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpTrue), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpFalse), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpNotEqual), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "!true",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpTrue), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpBang), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+    }
+}
+
+test "test conditionals" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "if (true) { 10 }; 3333;",
+            .expectedConstants = &[_]val{
+                .{ .int = 10 },
+                .{ .int = 3333 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                // 0000
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpTrue), &[_]usize{}),
+                // 0001
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpJumpNotTruthy), &[_]usize{10}),
+                // 0004
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                // 0007
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpJump), &[_]usize{11}),
+                // 0010
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpNull), &[_]usize{}),
+                // 0011
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+                // 0012
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                // 0015
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "if (true) { 10 } else { 20 }; 3333;",
+            .expectedConstants = &[_]val{
+                .{ .int = 10 },
+                .{ .int = 20 },
+                .{ .int = 3333 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpTrue), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpJumpNotTruthy), &[_]usize{10}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpJump), &[_]usize{13}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
             },
         },
