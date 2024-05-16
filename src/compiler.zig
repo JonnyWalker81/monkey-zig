@@ -260,7 +260,10 @@ pub const Compiler = struct {
     };
 };
 
-const val = union(enum) { int: usize };
+const val = union(enum) {
+    int: usize,
+    str: []const u8,
+};
 
 const CompilerTestCase = struct {
     input: []const u8,
@@ -573,6 +576,45 @@ test "test global let statement" {
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGetGlobal), &[_]usize{0}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpSetGlobal), &[_]usize{1}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGetGlobal), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+    }
+}
+
+test "test string expressions" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "\"monkey\"",
+            .expectedConstants = &[_]val{
+                .{ .str = "monkey" },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "\"mon\" + \"key\"",
+            .expectedConstants = &[_]val{
+                .{ .str = "mon" },
+                .{ .str = "key" },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
             },
         },
