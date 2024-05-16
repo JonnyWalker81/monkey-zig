@@ -7,6 +7,8 @@ const environment = @import("environment.zig");
 const code = @import("code.zig");
 const compiler = @import("compiler.zig");
 const vm = @import("vm.zig");
+const object = @import("object.zig");
+const sym = @import("symbol_table.zig");
 
 // monkey face in zig multi-line string constant
 const monkeyFace =
@@ -42,6 +44,14 @@ fn start() !void {
 
     var env = environment.Environment.init(arena.allocator());
     defer env.deinit();
+
+    var constants = std.ArrayList(object.Object).init(arena.allocator());
+
+    var globals: [vm.GlobalSize]object.Object = undefined;
+    @memset(&globals, .nil);
+
+    const symbolTable = sym.SymbolTable.init(arena.allocator());
+
     while (true) {
         // defer _ = gpa.deinit();
 
@@ -67,10 +77,10 @@ fn start() !void {
 
             const node = .{ .program = program };
 
-            var comp = compiler.Compiler.init(arena.allocator(), definitions);
+            var comp = compiler.Compiler.initWithState(arena.allocator(), definitions, symbolTable, &constants);
             try comp.compile(node);
 
-            var machine = vm.VM.init(arena.allocator(), comp.bytecode());
+            var machine = vm.VM.initWithGlobalStore(arena.allocator(), comp.bytecode(), &globals);
             try machine.run();
 
             const lastPopped = machine.lastPoppedStackElem();

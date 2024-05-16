@@ -65,6 +65,8 @@ pub const Constants = enum(u8) {
     OpJumpNotTruthy = 0x0d,
     OpJump = 0x0e,
     OpNull = 0x0f,
+    OpGetGlobal = 0x10,
+    OpSetGlobal = 0x11,
 };
 
 pub const Definition = struct {
@@ -161,6 +163,16 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .operandWidths = &[_]usize{},
     };
 
+    const opGetGlobal = &Definition{
+        .name = "OpGetGlobal",
+        .operandWidths = &[_]usize{2},
+    };
+
+    const opSetGlobal = &Definition{
+        .name = "OpSetGlobal",
+        .operandWidths = &[_]usize{2},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
@@ -179,6 +191,8 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     try definitions.put(allocator, @intFromEnum(Constants.OpJumpNotTruthy), opJumpNotTruthy);
     try definitions.put(allocator, @intFromEnum(Constants.OpJump), opJump);
     try definitions.put(allocator, @intFromEnum(Constants.OpNull), opNull);
+    try definitions.put(allocator, @intFromEnum(Constants.OpGetGlobal), opGetGlobal);
+    try definitions.put(allocator, @intFromEnum(Constants.OpSetGlobal), opSetGlobal);
 
     return definitions;
 }

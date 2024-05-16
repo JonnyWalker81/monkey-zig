@@ -8,5 +8,6 @@ comptime {
     _ = @import("code.zig");
     _ = @import("compiler.zig");
     _ = @import("vm.zig");
+    _ = @import("symbol_table.zig");
     // And all other files
 }

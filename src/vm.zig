@@ -6,7 +6,8 @@ const object = @import("object.zig");
 const code = @import("code.zig");
 const compiler = @import("compiler.zig");
 
-const StackSize = 2048;
+pub const StackSize = 2048;
+pub const GlobalSize = 65536;
 
 const True = object.Object{ .boolean = true };
 const False = object.Object{ .boolean = false };
@@ -18,6 +19,7 @@ pub const VM = struct {
     allocator: std.mem.Allocator,
     constants: []const object.Object,
     instructions: code.Instructions,
+    globals: *[GlobalSize]object.Object,
 
     stack: [StackSize]object.Object,
     sp: usize,
@@ -25,10 +27,28 @@ pub const VM = struct {
     pub fn init(allocator: std.mem.Allocator, bytecode: compiler.Compiler.Bytecode) Self {
         var stack: [StackSize]object.Object = undefined;
         @memset(&stack, .nil);
+        var globals: [GlobalSize]object.Object = undefined;
+        @memset(&globals, .nil);
+
         return .{
             .allocator = allocator,
             .constants = bytecode.constants,
             .instructions = bytecode.instructions,
+            .globals = &globals,
+            .stack = stack,
+            .sp = 0,
+        };
+    }
+
+    pub fn initWithGlobalStore(allocator: std.mem.Allocator, bytecode: compiler.Compiler.Bytecode, globals: *[GlobalSize]object.Object) Self {
+        var stack: [StackSize]object.Object = undefined;
+        @memset(&stack, .nil);
+
+        return .{
+            .allocator = allocator,
+            .constants = bytecode.constants,
+            .instructions = bytecode.instructions,
+            .globals = globals,
             .stack = stack,
             .sp = 0,
         };
@@ -107,6 +127,19 @@ pub const VM = struct {
                     // const pos = std.mem.readInt(u16, &buf, .big);
                     const pos = readUint16(self.instructions, ip + 1);
                     ip = pos - 1;
+                },
+                .OpGetGlobal => {
+                    const globalIndex = readUint16(self.instructions, ip + 1);
+                    ip += 2;
+
+                    const obj = self.globals[globalIndex];
+                    try self.push(obj);
+                },
+                .OpSetGlobal => {
+                    const globalIndex = readUint16(self.instructions, ip + 1);
+                    ip += 2;
+
+                    self.globals[globalIndex] = self.pop();
                 },
                 .OpNull => {
                     try self.push(Null);
@@ -333,6 +366,16 @@ test "test conditionals" {
         .{ .input = "if (1 > 2) { 10 }", .expected = .nil },
         .{ .input = "if (false) { 10 }", .expected = .nil },
         .{ .input = "if ((if (false) { 10 })) { 10 } else { 20 }", .expected = .{ .integer = 20 } },
+    };
+
+    try runTests(tests);
+}
+
+test "test global let statements" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "let one = 1; one", .expected = .{ .integer = 1 } },
+        .{ .input = "let one = 1; let two = 2; one + two", .expected = .{ .integer = 3 } },
+        .{ .input = "let one = 1; let two = one + one; one + two", .expected = .{ .integer = 3 } },
     };
 
     try runTests(tests);
