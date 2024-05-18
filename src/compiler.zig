@@ -166,6 +166,18 @@ pub const Compiler = struct {
                             return;
                         }
                     },
+                    .stringLiteral => |s| {
+                        const str = object.Object{ .string = s };
+                        const c = try self.addConstant(str);
+                        _ = try self.emit(@intFromEnum(code.Constants.OpConstant), &[_]usize{c});
+                    },
+                    .arrayLiteral => |al| {
+                        for (al.elements.items) |elem| {
+                            try self.compile(.{ .expression = elem });
+                        }
+
+                        _ = try self.emit(@intFromEnum(code.Constants.OpArray), &[_]usize{al.elements.items.len});
+                    },
                     else => {},
                 }
             },
@@ -629,6 +641,69 @@ test "test string expressions" {
     }
 }
 
+test "test array literals" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "[]",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "[1, 2, 3]",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+                .{ .int = 3 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{3}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "[1 + 2, 3 - 4, 5 * 6]",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+                .{ .int = 3 },
+                .{ .int = 4 },
+                .{ .int = 5 },
+                .{ .int = 6 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpSub), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpMul), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{3}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+    }
+}
+
 fn runCompilerTests(tests: []const CompilerTestCase, definitions: code.Definitions) !void {
     for (tests) |tt| {
         var helper = parse(tt.input);
@@ -704,6 +779,10 @@ fn testConstants(expected: []const val, actual: []const object.Object) !void {
         switch (exp) {
             .int => |i| {
                 try testIntegerObject(i, act);
+            },
+            .str => |s| {
+                const str = act.stringValue();
+                assert(std.mem.eql(u8, s, str));
             },
         }
     }

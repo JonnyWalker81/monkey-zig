@@ -88,7 +88,7 @@ pub const Object = union(enum) {
         };
     }
 
-    pub fn stringValue(self: *Self) []const u8 {
+    pub fn stringValue(self: *const Self) []const u8 {
         return switch (self.*) {
             .string => |s| s,
             else => "nil",

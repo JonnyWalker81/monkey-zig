@@ -5,6 +5,7 @@ const ast = @import("ast.zig");
 const object = @import("object.zig");
 const code = @import("code.zig");
 const compiler = @import("compiler.zig");
+const ArrayList = std.ArrayList;
 
 pub const StackSize = 2048;
 pub const GlobalSize = 65536;
@@ -16,7 +17,7 @@ const Null: object.Object = .nil;
 pub const VM = struct {
     const Self = @This();
 
-    allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
     constants: []const object.Object,
     instructions: code.Instructions,
     globals: *[GlobalSize]object.Object,
@@ -25,13 +26,14 @@ pub const VM = struct {
     sp: usize,
 
     pub fn init(allocator: std.mem.Allocator, bytecode: compiler.Compiler.Bytecode) Self {
+        const arena = std.heap.ArenaAllocator.init(allocator);
         var stack: [StackSize]object.Object = undefined;
         @memset(&stack, .nil);
         var globals: [GlobalSize]object.Object = undefined;
         @memset(&globals, .nil);
 
         return .{
-            .allocator = allocator,
+            .arena = arena,
             .constants = bytecode.constants,
             .instructions = bytecode.instructions,
             .globals = &globals,
@@ -52,6 +54,10 @@ pub const VM = struct {
             .stack = stack,
             .sp = 0,
         };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.arena.deinit();
     }
 
     pub fn stackTop(self: *Self) object.Object {
@@ -141,6 +147,15 @@ pub const VM = struct {
 
                     self.globals[globalIndex] = self.pop();
                 },
+                .OpArray => {
+                    const numElements = readUint16(self.instructions, ip + 1);
+                    ip += 2;
+
+                    const array = try self.buildArray(self.sp - numElements, self.sp);
+                    self.sp -= numElements;
+
+                    try self.push(array);
+                },
                 .OpNull => {
                     try self.push(Null);
                 },
@@ -154,6 +169,17 @@ pub const VM = struct {
         var buf: [2]u8 = undefined;
         @memcpy(&buf, s[ip .. ip + 2]);
         return std.mem.readInt(u16, &buf, .big);
+    }
+
+    fn buildArray(self: *Self, startIndex: usize, endIndex: usize) !object.Object {
+        var elements = ArrayList(*object.Object).init(self.arena.allocator());
+        try elements.ensureTotalCapacity(endIndex - startIndex);
+        for (startIndex..endIndex) |i| {
+            const elem = try self.arena.allocator().create(object.Object);
+            elem.* = self.stack[i];
+            try elements.append(elem);
+        }
+        return object.Object{ .array = elements };
     }
 
     fn executeMinusOperator(self: *Self) !void {
@@ -239,9 +265,23 @@ pub const VM = struct {
 
         if (left == .integer and right == .integer) {
             return try self.executeBinaryIntegerOperation(op, left, right);
+        } else if (left == .string and right == .string) {
+            return try self.executeBinaryStringOperation(op, left, right);
         }
 
         return std.debug.panic("unsupported types for binary operation: {s} {s}", .{ right.typeId(), left.typeId() });
+    }
+
+    fn executeBinaryStringOperation(self: *Self, op: code.Constants, left: object.Object, right: object.Object) !void {
+        if (op != .OpAdd) {
+            return std.debug.panic("unknown string operator: {any}", .{op});
+        }
+
+        const leftVal = left.stringValue();
+        const rightVal = right.stringValue();
+        const result = std.fmt.allocPrint(self.arena.allocator(), "{s}{s}", .{ leftVal, rightVal }) catch return std.debug.panic("out of memory", .{});
+
+        try self.push(object.Object{ .string = result });
     }
 
     fn executeBinaryIntegerOperation(self: *Self, op: code.Constants, left: object.Object, right: object.Object) !void {
@@ -286,10 +326,14 @@ pub const VM = struct {
 
 const assert = std.debug.assert;
 const test_allocator = std.testing.allocator;
+const expectEqualSlices = std.testing.expectEqualSlices;
+const expectEqual = std.testing.expectEqual;
 
 const ExpectedValue = union(enum) {
     integer: i32,
     boolean: bool,
+    string: []const u8,
+    intArray: []const i64,
     nil,
 };
 
@@ -381,6 +425,26 @@ test "test global let statements" {
     try runTests(tests);
 }
 
+test "test string expressions" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "\"monkey\"", .expected = .{ .string = "monkey" } },
+        .{ .input = "\"mon\" + \"key\"", .expected = .{ .string = "monkey" } },
+        .{ .input = "\"mon\" + \"key\" + \"banana\"", .expected = .{ .string = "monkeybanana" } },
+    };
+
+    try runTests(tests);
+}
+
+test "test array literals" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "[]", .expected = .{ .intArray = &[_]i64{} } },
+        .{ .input = "[1, 2, 3]", .expected = .{ .intArray = &[_]i64{ 1, 2, 3 } } },
+        .{ .input = "[1 + 2, 3 * 4, 5 + 6]", .expected = .{ .intArray = &[_]i64{ 3, 12, 11 } } },
+    };
+
+    try runTests(tests);
+}
+
 pub fn runTests(tests: []const vmTestCase) !void {
     var definitions = try code.initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
@@ -394,13 +458,14 @@ pub fn runTests(tests: []const vmTestCase) !void {
         defer comp.deinit();
 
         var vm = VM.init(test_allocator, comp.bytecode());
+        defer vm.deinit();
         try vm.run();
         const stackElem = vm.lastPoppedStackElem();
-        testExpectedObject(tt.expected, stackElem);
+        try testExpectedObject(tt.expected, stackElem);
     }
 }
 
-fn testExpectedObject(expected: ExpectedValue, actual: object.Object) void {
+fn testExpectedObject(expected: ExpectedValue, actual: object.Object) !void {
     switch (expected) {
         .integer => {
             const i = actual.intValue();
@@ -409,6 +474,21 @@ fn testExpectedObject(expected: ExpectedValue, actual: object.Object) void {
         .boolean => {
             const b = actual.boolValue();
             assert(b == expected.boolean);
+        },
+        .string => {
+            const s = actual.stringValue();
+            try expectEqualSlices(u8, s, expected.string);
+        },
+        .intArray => {
+            const elements = actual.array;
+            assert(elements.items.len == expected.intArray.len);
+
+            // try expectEqualSlices(i64, elements.items, expected.intArray);
+            for (expected.intArray, 0..) |e, i| {
+                const actualElem = elements.items[i];
+                const actualInt = actualElem.intValue();
+                try expectEqual(e, actualInt);
+            }
         },
         .nil => {
             assert(actual == .nil);

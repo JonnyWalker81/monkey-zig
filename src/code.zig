@@ -67,6 +67,7 @@ pub const Constants = enum(u8) {
     OpNull = 0x0f,
     OpGetGlobal = 0x10,
     OpSetGlobal = 0x11,
+    OpArray = 0x12,
 };
 
 pub const Definition = struct {
@@ -173,6 +174,11 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .operandWidths = &[_]usize{2},
     };
 
+    const opArray = &Definition{
+        .name = "OpArray",
+        .operandWidths = &[_]usize{2},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
@@ -193,6 +199,7 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     try definitions.put(allocator, @intFromEnum(Constants.OpNull), opNull);
     try definitions.put(allocator, @intFromEnum(Constants.OpGetGlobal), opGetGlobal);
     try definitions.put(allocator, @intFromEnum(Constants.OpSetGlobal), opSetGlobal);
+    try definitions.put(allocator, @intFromEnum(Constants.OpArray), opArray);
 
     return definitions;
 }
