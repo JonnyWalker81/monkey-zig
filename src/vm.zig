@@ -43,11 +43,12 @@ pub const VM = struct {
     }
 
     pub fn initWithGlobalStore(allocator: std.mem.Allocator, bytecode: compiler.Compiler.Bytecode, globals: *[GlobalSize]object.Object) Self {
+        const arena = std.heap.ArenaAllocator.init(allocator);
         var stack: [StackSize]object.Object = undefined;
         @memset(&stack, .nil);
 
         return .{
-            .allocator = allocator,
+            .arena = arena,
             .constants = bytecode.constants,
             .instructions = bytecode.instructions,
             .globals = globals,
@@ -155,6 +156,9 @@ pub const VM = struct {
                     self.sp -= numElements;
 
                     try self.push(array);
+                },
+                .OpHash => {
+                    // std.debug.panic("unimplemented", .{});
                 },
                 .OpNull => {
                     try self.push(Null);

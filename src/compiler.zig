@@ -21,6 +21,7 @@ const EmittedInstruction = struct {
 
 pub const Compiler = struct {
     const Self = @This();
+    arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(u8),
     constants: *std.ArrayList(object.Object),
@@ -30,9 +31,11 @@ pub const Compiler = struct {
     symbolTable: *sym.SymbolTable,
 
     pub fn init(allocator: std.mem.Allocator, definitions: code.Definitions) Compiler {
+        const arena = std.heap.ArenaAllocator.init(allocator);
         const constants = allocator.create(std.ArrayList(object.Object)) catch unreachable;
         constants.* = std.ArrayList(object.Object).init(allocator);
         return Compiler{
+            .arena = arena,
             .allocator = allocator,
             .instructions = std.ArrayList(u8).init(allocator),
             .constants = constants,
@@ -49,9 +52,11 @@ pub const Compiler = struct {
         symbolTable: *sym.SymbolTable,
         constants: *std.ArrayList(object.Object),
     ) Compiler {
+        var arena = std.heap.ArenaAllocator.init(allocator);
         return Compiler{
+            .arena = arena,
             .allocator = allocator,
-            .instructions = std.ArrayList(u8).init(allocator),
+            .instructions = std.ArrayList(u8).init(arena.allocator()),
             .constants = constants,
             .definitions = definitions,
             .lastInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
@@ -61,6 +66,8 @@ pub const Compiler = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // _ = self;
+        self.arena.deinit();
         self.instructions.deinit();
         self.constants.deinit();
         self.symbolTable.deinit();
@@ -178,6 +185,17 @@ pub const Compiler = struct {
 
                         _ = try self.emit(@intFromEnum(code.Constants.OpArray), &[_]usize{al.elements.items.len});
                     },
+                    .hashLiteral => |hl| {
+                        var keys = std.ArrayList(*ast.Expression).init(self.arena.allocator());
+                        var it = hl.pairs.iterator();
+                        while (it.next()) |pair| {
+                            try keys.append(pair.key_ptr.*);
+                        }
+
+                        std.mem.sort(*ast.Expression, keys.items, {}, cmpExpression);
+
+                        _ = try self.emit(@intFromEnum(code.Constants.OpHash), &[_]usize{keys.items.len * 2});
+                    },
                     else => {},
                 }
             },
@@ -205,6 +223,16 @@ pub const Compiler = struct {
         }
     }
 
+    fn cmpExpression(context: void, a: *ast.Expression, b: *ast.Expression) bool {
+        _ = context;
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        const aStr = std.fmt.allocPrint(gpa.allocator(), "{s}", .{a}) catch return false;
+        const bStr = std.fmt.allocPrint(gpa.allocator(), "{s}", .{b}) catch return false;
+        defer gpa.allocator().free(aStr);
+        defer gpa.allocator().free(bStr);
+        return std.mem.lessThan(u8, aStr, bStr);
+    }
+
     fn replaceInstruction(self: *Self, pos: usize, newInstruction: []const u8) !void {
         var i: usize = 0;
         while (i < newInstruction.len) : (i += 1) {
@@ -214,8 +242,7 @@ pub const Compiler = struct {
 
     fn changeOperand(self: *Self, pos: usize, operand: usize) !void {
         const op = self.instructions.items[pos];
-        const newInstruction = code.make(self.allocator, self.definitions, op, &[_]usize{operand});
-        defer self.allocator.free(newInstruction);
+        const newInstruction = code.make(self.arena.allocator(), self.definitions, op, &[_]usize{operand});
 
         return self.replaceInstruction(pos, newInstruction);
     }
@@ -238,8 +265,7 @@ pub const Compiler = struct {
     }
 
     pub fn emit(self: *Self, op: code.Opcode, operands: []const usize) !usize {
-        const ins = code.make(self.allocator, self.definitions, op, operands);
-        defer self.allocator.free(ins);
+        const ins = code.make(self.arena.allocator(), self.definitions, op, operands);
         const pos = try self.addInstruction(ins);
         self.setLastInstruction(op, pos);
 
@@ -704,7 +730,77 @@ test "test array literals" {
     }
 }
 
+test "test hash literals" {
+    // std.log.warn("test hash literals", .{});
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "{}",
+            .expectedConstants = &[_]val{},
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        // CompilerTestCase{
+        //     .input = "{1: 2, 3: 4, 5: 6}",
+        //     .expectedConstants = &[_]val{
+        //         .{ .int = 1 },
+        //         .{ .int = 2 },
+        //         .{ .int = 3 },
+        //         .{ .int = 4 },
+        //         .{ .int = 5 },
+        //         .{ .int = 6 },
+        //     },
+        //     .expectedInstructions = &[_]code.Instructions{
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{6}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+        //     },
+        // },
+        // CompilerTestCase{
+        //     .input = "{1: 2 + 3, 4: 5 * 6}",
+        //     .expectedConstants = &[_]val{
+        //         .{ .int = 1 },
+        //         .{ .int = 2 },
+        //         .{ .int = 3 },
+        //         .{ .int = 4 },
+        //         .{ .int = 5 },
+        //         .{ .int = 6 },
+        //     },
+        //     .expectedInstructions = &[_]code.Instructions{
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpMul), &[_]usize{}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{4}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+        //     },
+        // },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+    }
+}
+
 fn runCompilerTests(tests: []const CompilerTestCase, definitions: code.Definitions) !void {
+    // std.log.warn("runCompilerTests", .{});
     for (tests) |tt| {
         var helper = parse(tt.input);
         defer helper.deinit();

@@ -19,13 +19,16 @@ pub const Symbol = struct {
 };
 
 pub const SymbolTable = struct {
+    // arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     store: std.StringHashMap(Symbol),
     num_definitions: usize,
 
     pub fn init(allocator: std.mem.Allocator) *SymbolTable {
+        // var arena = std.heap.ArenaAllocator.init(allocator);
         const st = allocator.create(SymbolTable) catch unreachable;
         st.* = SymbolTable{
+            // .arena = arena,
             .allocator = allocator,
             .store = std.StringHashMap(Symbol).init(allocator),
             .num_definitions = 0,
@@ -35,7 +38,9 @@ pub const SymbolTable = struct {
     }
 
     pub fn deinit(self: *SymbolTable) void {
+        // self.arena.deinit();
         self.store.deinit();
+        // self.allocator.destroy(self);
     }
 
     pub fn define(self: *SymbolTable, name: []const u8) !Symbol {
