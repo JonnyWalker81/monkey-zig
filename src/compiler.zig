@@ -194,6 +194,11 @@ pub const Compiler = struct {
 
                         std.mem.sort(*ast.Expression, keys.items, {}, cmpExpression);
 
+                        for (keys.items) |key| {
+                            try self.compile(.{ .expression = key });
+                            try self.compile(.{ .expression = hl.pairs.get(key).? });
+                        }
+
                         _ = try self.emit(@intFromEnum(code.Constants.OpHash), &[_]usize{keys.items.len * 2});
                     },
                     else => {},
@@ -744,50 +749,50 @@ test "test hash literals" {
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
             },
         },
-        // CompilerTestCase{
-        //     .input = "{1: 2, 3: 4, 5: 6}",
-        //     .expectedConstants = &[_]val{
-        //         .{ .int = 1 },
-        //         .{ .int = 2 },
-        //         .{ .int = 3 },
-        //         .{ .int = 4 },
-        //         .{ .int = 5 },
-        //         .{ .int = 6 },
-        //     },
-        //     .expectedInstructions = &[_]code.Instructions{
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{6}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
-        //     },
-        // },
-        // CompilerTestCase{
-        //     .input = "{1: 2 + 3, 4: 5 * 6}",
-        //     .expectedConstants = &[_]val{
-        //         .{ .int = 1 },
-        //         .{ .int = 2 },
-        //         .{ .int = 3 },
-        //         .{ .int = 4 },
-        //         .{ .int = 5 },
-        //         .{ .int = 6 },
-        //     },
-        //     .expectedInstructions = &[_]code.Instructions{
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpMul), &[_]usize{}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{4}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
-        //     },
-        // },
+        CompilerTestCase{
+            .input = "{1: 2, 3: 4, 5: 6}",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+                .{ .int = 3 },
+                .{ .int = 4 },
+                .{ .int = 5 },
+                .{ .int = 6 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{6}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "{1: 2 + 3, 4: 5 * 6}",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+                .{ .int = 3 },
+                .{ .int = 4 },
+                .{ .int = 5 },
+                .{ .int = 6 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{3}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{4}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{5}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpMul), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpHash), &[_]usize{4}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
     };
 
     try runCompilerTests(tests, definitions);
