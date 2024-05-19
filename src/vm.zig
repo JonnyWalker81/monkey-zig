@@ -158,7 +158,13 @@ pub const VM = struct {
                     try self.push(array);
                 },
                 .OpHash => {
-                    // std.debug.panic("unimplemented", .{});
+                    const numElements = readUint16(self.instructions, ip + 1);
+                    ip += 2;
+
+                    const hash = try self.buildHash(self.sp - numElements, self.sp);
+                    self.sp -= numElements;
+
+                    try self.push(hash);
                 },
                 .OpNull => {
                     try self.push(Null);
@@ -173,6 +179,22 @@ pub const VM = struct {
         var buf: [2]u8 = undefined;
         @memcpy(&buf, s[ip .. ip + 2]);
         return std.mem.readInt(u16, &buf, .big);
+    }
+
+    fn buildHash(self: *Self, startIndex: usize, endIndex: usize) !object.Object {
+        var pairs = std.HashMap(object.HashKey, object.HashPair, object.HashKeyContext, std.hash_map.default_max_load_percentage).init(self.arena.allocator());
+
+        var i = startIndex;
+        while (i < endIndex) : (i += 2) {
+            const key = try self.arena.allocator().create(object.Object);
+            key.* = self.stack[i];
+            const value = try self.arena.allocator().create(object.Object);
+            value.* = self.stack[i + 1];
+            const pair = .{ .key = key, .value = value };
+            try pairs.put(key.hashKey(), pair);
+        }
+
+        return .{ .hash = .{ .pairs = pairs } };
     }
 
     fn buildArray(self: *Self, startIndex: usize, endIndex: usize) !object.Object {
@@ -333,11 +355,17 @@ const test_allocator = std.testing.allocator;
 const expectEqualSlices = std.testing.expectEqualSlices;
 const expectEqual = std.testing.expectEqual;
 
+const hashpair = struct {
+    key: object.HashKey,
+    value: i64,
+};
+
 const ExpectedValue = union(enum) {
     integer: i32,
     boolean: bool,
     string: []const u8,
     intArray: []const i64,
+    hash: []const hashpair,
     nil,
 };
 
@@ -449,6 +477,32 @@ test "test array literals" {
     try runTests(tests);
 }
 
+test "test hash literals" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "{}", .expected = .{ .hash = &[_]hashpair{} } },
+        .{
+            .input = "{1: 2, 2: 3}",
+            .expected = .{
+                .hash = &[_]hashpair{
+                    .{ .key = (object.Object{ .integer = 1 }).hashKey(), .value = 2 },
+                    .{ .key = (object.Object{ .integer = 2 }).hashKey(), .value = 3 },
+                },
+            },
+        },
+        .{
+            .input = "{1 + 1: 2 * 2, 3 + 3: 4 * 4}",
+            .expected = .{
+                .hash = &[_]hashpair{
+                    .{ .key = (object.Object{ .integer = 2 }).hashKey(), .value = 4 },
+                    .{ .key = (object.Object{ .integer = 6 }).hashKey(), .value = 16 },
+                },
+            },
+        },
+    };
+
+    try runTests(tests);
+}
+
 pub fn runTests(tests: []const vmTestCase) !void {
     var definitions = try code.initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
@@ -492,6 +546,27 @@ fn testExpectedObject(expected: ExpectedValue, actual: object.Object) !void {
                 const actualElem = elements.items[i];
                 const actualInt = actualElem.intValue();
                 try expectEqual(e, actualInt);
+            }
+        },
+        .hash => {
+            const hash = actual.hash;
+            assert(hash.pairs.count() == expected.hash.len);
+
+            for (expected.hash) |p| {
+                const expectedKey = p.key;
+                const expectedValue = p.value;
+
+                const pair = hash.pairs.get(expectedKey).?;
+
+                const actualValue = pair.value.intValue();
+                try expectEqual(expectedValue, actualValue);
+
+                //     const actualPair = hash.pairs[i];
+                //     const actualKey = actualPair.key;
+                //     const actualValue = actualPair.value.intValue();
+
+                //     try testExpectedObject(expectedKey, actualKey);
+                //     try expectEqual(expectedValue, actualValue);
             }
         },
         .nil => {

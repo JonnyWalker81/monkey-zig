@@ -110,7 +110,7 @@ pub const Object = union(enum) {
         };
     }
 
-    pub fn hashKey(self: *Self) HashKey {
+    pub fn hashKey(self: *const Self) HashKey {
         return switch (self.*) {
             .integer => |i| .{ .type = "INTEGER", .value = @as(u64, @intCast(i)) },
             .boolean => |b| .{ .type = "BOOLEAN", .value = if (b) 1 else 0 },
