@@ -172,6 +172,9 @@ pub const VM = struct {
 
                     try self.executeIndexExpression(left, index);
                 },
+                .OpCall => {},
+                .OpReturnValue => {},
+                .OpReturn => {},
                 .OpNull => {
                     try self.push(Null);
                 },
