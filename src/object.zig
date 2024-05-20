@@ -4,6 +4,7 @@ const environment = @import("environment.zig");
 const ArrayList = std.ArrayList;
 const AutoHashMap = std.AutoHashMap;
 const Wyhash = std.hash.Wyhash;
+const code = @import("code.zig");
 
 pub const BuiltinFn = *const fn (allocator: std.mem.Allocator, []*Object) ?*Object;
 
@@ -44,6 +45,9 @@ pub const Object = union(enum) {
         parameters: ArrayList(*ast.Identifier),
         body: *ast.BlockStatement,
         env: *environment.Environment,
+    },
+    compiledFunction: struct {
+        instructions: code.Instructions,
     },
     string: []const u8,
     builtin: BuiltinFn,
@@ -107,6 +111,7 @@ pub const Object = union(enum) {
             .builtin => "BUILTIN",
             .array => "ARRAY",
             .hash => "HASH",
+            .compiledFunction => "COMPILED_FUNCTION",
         };
     }
 
@@ -185,6 +190,9 @@ pub const Object = union(enum) {
                     i += 1;
                 }
                 try writer.print("}}", .{});
+            },
+            .compiledFunction => |cf| {
+                try writer.print("CompiledFunction: {any}", .{cf});
             },
         }
     }

@@ -166,6 +166,12 @@ pub const VM = struct {
 
                     try self.push(hash);
                 },
+                .OpIndex => {
+                    const index = self.pop();
+                    const left = self.pop();
+
+                    try self.executeIndexExpression(left, index);
+                },
                 .OpNull => {
                     try self.push(Null);
                 },
@@ -179,6 +185,42 @@ pub const VM = struct {
         var buf: [2]u8 = undefined;
         @memcpy(&buf, s[ip .. ip + 2]);
         return std.mem.readInt(u16, &buf, .big);
+    }
+
+    fn executeIndexExpression(self: *Self, left: object.Object, index: object.Object) !void {
+        if (left == .array and index == .integer) {
+            return try self.executeArrayIndex(left, index);
+        }
+
+        if (left == .hash) {
+            return try self.executeHashIndex(left, index);
+        }
+
+        return std.debug.panic("index operator not supported: {s}", .{left.typeId()});
+    }
+
+    fn executeArrayIndex(self: *Self, left: object.Object, index: object.Object) !void {
+        const array = left.array;
+        const i = index.intValue();
+        const max: i64 = @as(i64, @intCast(array.items.len)) - 1;
+        if (i < 0 or i > max) {
+            try self.push(Null);
+            return;
+        }
+
+        try self.push(array.items[@intCast(i)].*);
+    }
+
+    fn executeHashIndex(self: *Self, left: object.Object, index: object.Object) !void {
+        const hash = left.hash;
+        const key = index.hashKey();
+        const pair = hash.pairs.get(key);
+        if (pair == null) {
+            try self.push(Null);
+            return;
+        }
+
+        try self.push(pair.?.value.*);
     }
 
     fn buildHash(self: *Self, startIndex: usize, endIndex: usize) !object.Object {
@@ -498,6 +540,23 @@ test "test hash literals" {
                 },
             },
         },
+    };
+
+    try runTests(tests);
+}
+
+test "test index expressions" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "[1, 2, 3][1]", .expected = .{ .integer = 2 } },
+        .{ .input = "[1, 2, 3][0 + 2]", .expected = .{ .integer = 3 } },
+        .{ .input = "[[1, 1, 1]][0][0]", .expected = .{ .integer = 1 } },
+        .{ .input = "[][0]", .expected = .nil },
+        .{ .input = "[1, 2, 3][99]", .expected = .nil },
+        .{ .input = "[1][-1]", .expected = .nil },
+        .{ .input = "{1: 1, 2: 2}[1]", .expected = .{ .integer = 1 } },
+        .{ .input = "{1: 1, 2: 2}[2]", .expected = .{ .integer = 2 } },
+        .{ .input = "{1: 1}[0]", .expected = .nil },
+        .{ .input = "{}[0]", .expected = .nil },
     };
 
     try runTests(tests);

@@ -69,6 +69,10 @@ pub const Constants = enum(u8) {
     OpSetGlobal = 0x11,
     OpArray = 0x12,
     OpHash = 0x13,
+    OpIndex = 0x14,
+    OpCall = 0x15,
+    OpReturnValue = 0x16,
+    OpReturn = 0x17,
 };
 
 pub const Definition = struct {
@@ -185,6 +189,26 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .operandWidths = &[_]usize{2},
     };
 
+    const opIndex = &Definition{
+        .name = "OpIndex",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opCall = &Definition{
+        .name = "OpCall",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opReturnValue = &Definition{
+        .name = "OpReturnValue",
+        .operandWidths = &[_]usize{},
+    };
+
+    const opReturn = &Definition{
+        .name = "OpReturn",
+        .operandWidths = &[_]usize{},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
@@ -207,6 +231,10 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     try definitions.put(allocator, @intFromEnum(Constants.OpSetGlobal), opSetGlobal);
     try definitions.put(allocator, @intFromEnum(Constants.OpArray), opArray);
     try definitions.put(allocator, @intFromEnum(Constants.OpHash), opHash);
+    try definitions.put(allocator, @intFromEnum(Constants.OpIndex), opIndex);
+    try definitions.put(allocator, @intFromEnum(Constants.OpCall), opCall);
+    try definitions.put(allocator, @intFromEnum(Constants.OpReturnValue), opReturnValue);
+    try definitions.put(allocator, @intFromEnum(Constants.OpReturn), opReturn);
 
     return definitions;
 }
