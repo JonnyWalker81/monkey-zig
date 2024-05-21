@@ -22,25 +22,26 @@ const EmittedInstruction = struct {
 const CompilationScope = struct {
     const Self = @This();
 
-    arena: std.heap.ArenaAllocator,
+    // arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     instructions: std.ArrayList(u8),
     lastInstruction: EmittedInstruction,
     previousInstruction: EmittedInstruction,
 
     pub fn init(allocator: std.mem.Allocator) CompilationScope {
-        var arena = std.heap.ArenaAllocator.init(allocator);
+        // var arena = std.heap.ArenaAllocator.init(allocator);
         return CompilationScope{
-            .arena = arena,
+            // .arena = arena,
             .allocator = allocator,
-            .instructions = std.ArrayList(u8).init(arena.allocator()),
+            .instructions = std.ArrayList(u8).init(allocator),
             .lastInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
             .previousInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.arena.deinit();
+        // self.arena.deinit();
+        self.instructions.deinit();
     }
 };
 
@@ -58,12 +59,12 @@ pub const Compiler = struct {
     scopeIndex: usize,
 
     pub fn init(allocator: std.mem.Allocator, definitions: code.Definitions) Compiler {
-        var arena = std.heap.ArenaAllocator.init(allocator);
+        const arena = std.heap.ArenaAllocator.init(allocator);
         const constants = allocator.create(std.ArrayList(object.Object)) catch unreachable;
         constants.* = std.ArrayList(object.Object).init(allocator);
         const mainScope = CompilationScope.init(allocator);
         // var scopes = std.ArrayList(CompilationScope).init(allocator);
-        var scopes = std.ArrayList(CompilationScope).init(arena.allocator());
+        var scopes = std.ArrayList(CompilationScope).init(allocator);
         scopes.append(mainScope) catch unreachable;
         return Compiler{
             .arena = arena,
@@ -105,14 +106,16 @@ pub const Compiler = struct {
         self.symbolTable.deinit();
         self.allocator.destroy(self.constants);
         self.allocator.destroy(self.symbolTable);
-        // for (self.scopes.items) |scope| {
-        //     scope.instructions.deinit();
-        // }
-        // self.scopes.deinit();
-        for (0..self.scopes.items.len) |i| {
-            var scope = self.scopes.items[i];
-            scope.deinit();
+        for (self.scopes.items) |scope| {
+            var s = scope;
+            s.deinit();
         }
+        // self.scopes.deinit();
+        // for (0..self.scopes.items.len) |i| {
+        //     var scope = self.scopes.items[i];
+        //     scope.deinit();
+        // }
+        self.scopes.deinit();
         self.arena.deinit();
     }
 
@@ -247,6 +250,18 @@ pub const Compiler = struct {
                         try self.compile(.{ .expression = ie.index });
                         _ = try self.emit(@intFromEnum(code.Constants.OpIndex), &[_]usize{});
                     },
+                    .functionLiteral => |fl| {
+                        try self.enterScope();
+
+                        try self.compile(.{ .blockStatement = fl.body });
+
+                        var scope = try self.leaveScope();
+                        defer scope.deinit();
+                        // std.log.warn("instructions (functionLiteral): {any}", .{instructions.items});
+
+                        const compiledFn: object.Object = .{ .compiledFunction = .{ .instructions = try scope.instructions.toOwnedSlice() } };
+                        _ = try self.emit(@intFromEnum(code.Constants.OpConstant), &[_]usize{try self.addConstant(compiledFn)});
+                    },
                     else => {},
                 }
             },
@@ -258,12 +273,20 @@ pub const Compiler = struct {
                         const symbol = try self.symbolTable.define(ls.identifier.identifier);
                         _ = try self.emit(@intFromEnum(code.Constants.OpSetGlobal), &[_]usize{symbol.index});
                     },
+                    .returnStatement => |rs| {
+                        // std.log.warn("return statement: {any}", .{rs});
+                        try self.compile(.{ .expression = rs.expression });
+
+                        _ = try self.emit(@intFromEnum(code.Constants.OpReturnValue), &[_]usize{});
+                    },
                     .expressionStatement => |es| {
                         try self.compile(.{ .expression = es.expression });
                         _ = try self.emit(@intFromEnum(code.Constants.OpPop), &[_]usize{});
                     },
 
-                    else => {},
+                    else => {
+                        std.log.warn("unknown statement: {any}", .{s});
+                    },
                 }
             },
             .blockStatement => |bs| {
@@ -314,15 +337,21 @@ pub const Compiler = struct {
     }
 
     pub fn bytecode(self: *Self) Bytecode {
+        // std.log.warn("instructions (bytecode): {any}", .{self.currentInstructions().items});
+        // std.log.warn("constants (bytecode): {any}", .{self.constants.items});
+        // std.log.warn("scopeIndex: {any}", .{self.scopeIndex});
+        // std.log.warn("scopes (bytecode): {any}", .{self.scopes.items[self.scopeIndex].instructions.items});
+        // std.log.warn("", .{});
         // std.log.warn("instructions (bytecode): {any}", .{self.instructions.items});
         return Bytecode{
-            .instructions = self.currentInstructions().items[0..],
+            .instructions = self.currentInstructions().items,
             .constants = self.constants.items[0..],
         };
     }
 
     pub fn emit(self: *Self, op: code.Opcode, operands: []const usize) !usize {
         const ins = code.make(self.arena.allocator(), self.definitions, op, operands);
+        // defer self.allocator.free(ins);
         const pos = try self.addInstruction(ins);
         self.setLastInstruction(op, pos);
 
@@ -360,18 +389,22 @@ pub const Compiler = struct {
     pub fn enterScope(self: *Self) !void {
         // const instructions = std.ArrayList(u8).init(self.arena.allocator());
         const scope = CompilationScope.init(self.allocator);
+        // defer scope.deinit();
 
-        std.debug.print("scopes: {any}", .{self.scopes.items.len});
+        // std.debug.print("scopes: {any}", .{self.scopes.items.len});
         try self.scopes.append(scope);
-        std.debug.print("scopes: {any}", .{self.scopes.items.len});
+        // std.debug.print("scopes: {any}", .{self.scopes.items.len});
         self.scopeIndex += 1;
     }
 
-    pub fn leaveScope(self: *Self) *std.ArrayList(u8) {
-        _ = self.scopes.pop();
+    pub fn leaveScope(self: *Self) !CompilationScope {
+        // const instructions = try self.currentInstructions().clone();
+        const current = self.scopes.pop();
+        std.log.warn("current.instructions: {any}", .{current.instructions.items});
+        // defer top.deinit();
         self.scopeIndex -= 1;
 
-        return self.currentInstructions();
+        return current;
     }
 
     pub const Bytecode = struct {
@@ -989,7 +1022,7 @@ test "test functions" {
         // },
     };
 
-    // try runCompilerTests(tests, definitions);
+    try runCompilerTests(tests, definitions);
 
     for (tests) |tt| {
         for (tt.expectedInstructions) |ins| {
@@ -998,8 +1031,8 @@ test "test functions" {
 
         for (tt.expectedConstants) |c| {
             switch (c) {
-                .instructions => {
-                    for (c.instructions) |ins| {
+                .instructions => |i| {
+                    for (i) |ins| {
                         test_allocator.free(ins);
                     }
                 },
@@ -1031,7 +1064,9 @@ test "test compiler scopes" {
     var last = compiler.scopes.items[compiler.scopeIndex].lastInstruction;
     try expectEqual(last.opcode, @intFromEnum(code.Constants.OpSub));
 
-    _ = compiler.leaveScope();
+    var ins = try compiler.leaveScope();
+    defer ins.deinit();
+
     try expectEqual(compiler.scopeIndex, 0);
 
     _ = try compiler.emit(@intFromEnum(code.Constants.OpAdd), &[_]usize{});
@@ -1097,11 +1132,11 @@ fn testInstructions(allocator: std.mem.Allocator, expected: []const code.Instruc
     defer allocator.free(concatted);
     // std.log.warn("concatted: {any}", .{concatted});
     // std.log.warn("actual: {any}", .{actual});
-    assert(concatted.len == actual.len);
+    try expectEqual(concatted.len, actual.len);
 
     for (concatted, 0..) |ins, i| {
         const act = actual[i];
-        assert(ins == act);
+        try expectEqual(ins, act);
     }
 }
 
@@ -1137,7 +1172,7 @@ fn testConstants(expected: []const val, actual: []const object.Object) !void {
 
 fn testIntegerObject(expected: usize, actual: object.Object) !void {
     const i = actual.intValue();
-    assert(i == expected);
+    try expectEqual(i, @as(i64, @intCast(expected)));
 }
 
 // fn concatInstructions(allocator: std.mem.Allocator, slices: []const code.Instructions) !code.Instructions {
