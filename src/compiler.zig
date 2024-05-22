@@ -186,7 +186,7 @@ pub const Compiler = struct {
 
                         try self.compile(.{ .blockStatement = ie.consequence });
 
-                        if (self.lastInstructionIsPop()) {
+                        if (self.lastInstructionIs(@intFromEnum(code.Constants.OpPop))) {
                             self.removeLastPop();
                         }
 
@@ -198,7 +198,7 @@ pub const Compiler = struct {
                         if (ie.alternative) |alternative| {
                             try self.compile(.{ .blockStatement = alternative });
 
-                            if (self.lastInstructionIsPop()) {
+                            if (self.lastInstructionIs(@intFromEnum(code.Constants.OpPop))) {
                                 self.removeLastPop();
                             }
                         } else {
@@ -255,12 +255,28 @@ pub const Compiler = struct {
 
                         try self.compile(.{ .blockStatement = fl.body });
 
+                        if (self.lastInstructionIs(@intFromEnum(code.Constants.OpPop))) {
+                            try self.replaceLastPopWithReturn();
+                        }
+
+                        if (!self.lastInstructionIs(@intFromEnum(code.Constants.OpReturnValue))) {
+                            _ = try self.emit(@intFromEnum(code.Constants.OpReturn), &[_]usize{});
+                        }
+
                         var scope = try self.leaveScope();
-                        defer scope.deinit();
                         // std.log.warn("instructions (functionLiteral): {any}", .{instructions.items});
 
                         const compiledFn: object.Object = .{ .compiledFunction = .{ .instructions = try scope.instructions.toOwnedSlice() } };
                         _ = try self.emit(@intFromEnum(code.Constants.OpConstant), &[_]usize{try self.addConstant(compiledFn)});
+                    },
+                    .callExpression => |ce| {
+                        try self.compile(.{ .expression = ce.function });
+
+                        // for (ce.arguments.items) |arg| {
+                        //     try self.compile(.{ .expression = arg });
+                        // }
+
+                        _ = try self.emit(@intFromEnum(code.Constants.OpCall), &[_]usize{});
                     },
                     else => {},
                 }
@@ -311,6 +327,12 @@ pub const Compiler = struct {
         return std.mem.lessThan(u8, aStr, bStr);
     }
 
+    fn replaceLastPopWithReturn(self: *Self) !void {
+        const lastPos = self.scopes.items[self.scopeIndex].lastInstruction.position;
+        _ = try self.replaceInstruction(lastPos, code.make(self.arena.allocator(), self.definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}));
+        self.scopes.items[self.scopeIndex].lastInstruction.opcode = @intFromEnum(code.Constants.OpReturnValue);
+    }
+
     fn replaceInstruction(self: *Self, pos: usize, newInstruction: []const u8) !void {
         const ins = self.currentInstructions();
         var i: usize = 0;
@@ -326,8 +348,12 @@ pub const Compiler = struct {
         return self.replaceInstruction(pos, newInstruction);
     }
 
-    fn lastInstructionIsPop(self: Self) bool {
-        return self.scopes.items[self.scopeIndex].lastInstruction.opcode == @intFromEnum(code.Constants.OpPop);
+    fn lastInstructionIs(self: *Self, op: code.Opcode) bool {
+        if (self.currentInstructions().items.len == 0) {
+            return false;
+        }
+
+        return self.scopes.items[self.scopeIndex].lastInstruction.opcode == op;
     }
 
     fn removeLastPop(self: *Self) void {
@@ -388,7 +414,7 @@ pub const Compiler = struct {
 
     pub fn enterScope(self: *Self) !void {
         // const instructions = std.ArrayList(u8).init(self.arena.allocator());
-        const scope = CompilationScope.init(self.allocator);
+        const scope = CompilationScope.init(self.arena.allocator());
         // defer scope.deinit();
 
         // std.debug.print("scopes: {any}", .{self.scopes.items.len});
@@ -400,7 +426,7 @@ pub const Compiler = struct {
     pub fn leaveScope(self: *Self) !CompilationScope {
         // const instructions = try self.currentInstructions().clone();
         const current = self.scopes.pop();
-        std.log.warn("current.instructions: {any}", .{current.instructions.items});
+        // std.log.warn("current.instructions: {any}", .{current.instructions.items});
         // defer top.deinit();
         self.scopeIndex -= 1;
 
@@ -997,19 +1023,44 @@ test "test functions" {
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
             },
         },
-        // CompilerTestCase{
-        //     .input = "fn() { 5 + 10 }",
-        //     .expectedConstants = &[_]val{
-        //         .{ .int = 5 },
-        //         .{ .int = 10 },
-        //     },
-        //     .expectedInstructions = &[_]code.Instructions{
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
-        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
-        //     },
-        // },
+        CompilerTestCase{
+            .input = "fn() { 5 + 10 }",
+            .expectedConstants = &[_]val{
+                .{ .int = 5 },
+                .{ .int = 10 },
+                .{
+                    .instructions = &[_]code.Instructions{
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpAdd), &[_]usize{}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
+                    },
+                },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "fn() { 1; 2 }",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+                .{ .int = 2 },
+                .{
+                    .instructions = &[_]code.Instructions{
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
+                    },
+                },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
         // CompilerTestCase{
         //     .input = "fn() { 24 }",
         //     .expectedConstants = &[_]val{
@@ -1020,6 +1071,47 @@ test "test functions" {
         //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
         //     },
         // },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+
+        for (tt.expectedConstants) |c| {
+            switch (c) {
+                .instructions => |i| {
+                    for (i) |ins| {
+                        test_allocator.free(ins);
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+}
+
+test "test functions without return value" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "fn() { }",
+            .expectedConstants = &[_]val{
+                .{
+                    .instructions = &[_]code.Instructions{
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturn), &[_]usize{}),
+                    },
+                },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
     };
 
     try runCompilerTests(tests, definitions);
@@ -1078,6 +1170,69 @@ test "test compiler scopes" {
 
     const previous = compiler.scopes.items[compiler.scopeIndex].previousInstruction;
     try expectEqual(previous.opcode, @intFromEnum(code.Constants.OpMul));
+}
+
+test "test function calls" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "fn() { 24 }()",
+            .expectedConstants = &[_]val{
+                .{ .int = 24 },
+                .{
+                    .instructions = &[_]code.Instructions{
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
+                    },
+                },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpCall), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "let noArg = fn() { 24 }; noArg();",
+            .expectedConstants = &[_]val{
+                .{ .int = 24 },
+                .{
+                    .instructions = &[_]code.Instructions{
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
+                    },
+                },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpSetGlobal), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGetGlobal), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpCall), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+
+        for (tt.expectedConstants) |c| {
+            switch (c) {
+                .instructions => |i| {
+                    for (i) |ins| {
+                        test_allocator.free(ins);
+                    }
+                },
+                else => {},
+            }
+        }
+    }
 }
 
 fn runCompilerTests(tests: []const CompilerTestCase, definitions: code.Definitions) !void {
