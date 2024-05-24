@@ -6,9 +6,11 @@ const object = @import("object.zig");
 const code = @import("code.zig");
 const compiler = @import("compiler.zig");
 const ArrayList = std.ArrayList;
+const frame = @import("frame.zig");
 
 pub const StackSize = 2048;
 pub const GlobalSize = 65536;
+pub const MaxFrames = 1024;
 
 const True = object.Object{ .boolean = true };
 const False = object.Object{ .boolean = false };
@@ -25,12 +27,24 @@ pub const VM = struct {
     stack: [StackSize]object.Object,
     sp: usize,
 
+    frames: [MaxFrames]frame.Frame,
+    framesIndex: usize,
+
     pub fn init(allocator: std.mem.Allocator, bytecode: compiler.Compiler.Bytecode) Self {
         const arena = std.heap.ArenaAllocator.init(allocator);
         var stack: [StackSize]object.Object = undefined;
         @memset(&stack, .nil);
+
         var globals: [GlobalSize]object.Object = undefined;
         @memset(&globals, .nil);
+
+        var frames: [MaxFrames]frame.Frame = undefined;
+        @memset(&frames, undefined);
+
+        const compiledFn = object.Object{ .compiledFunction = .{ .instructions = bytecode.instructions } };
+        const mainFrame = frame.Frame.init(compiledFn);
+
+        frames[0] = mainFrame;
 
         return .{
             .arena = arena,
@@ -39,6 +53,8 @@ pub const VM = struct {
             .globals = &globals,
             .stack = stack,
             .sp = 0,
+            .frames = frames,
+            .framesIndex = 1,
         };
     }
 
@@ -77,6 +93,20 @@ pub const VM = struct {
         const o = self.stack[self.sp - 1];
         self.sp -= 1;
         return o;
+    }
+
+    pub fn currentFrame(self: *Self) frame.Frame {
+        return self.frames[self.framesIndex - 1];
+    }
+
+    pub fn pushFrame(self: *Self, f: frame.Frame) void {
+        self.frames[self.framesIndex] = f;
+        self.framesIndex += 1;
+    }
+
+    pub fn popFrame(self: *Self) frame.Frame {
+        self.framesIndex -= 1;
+        return self.frames[self.framesIndex];
     }
 
     pub fn run(self: *Self) !void {
