@@ -21,7 +21,6 @@ pub const VM = struct {
 
     arena: std.heap.ArenaAllocator,
     constants: []const object.Object,
-    instructions: code.Instructions,
     globals: *[GlobalSize]object.Object,
 
     stack: [StackSize]object.Object,
@@ -49,7 +48,6 @@ pub const VM = struct {
         return .{
             .arena = arena,
             .constants = bytecode.constants,
-            .instructions = bytecode.instructions,
             .globals = &globals,
             .stack = stack,
             .sp = 0,
@@ -95,8 +93,8 @@ pub const VM = struct {
         return o;
     }
 
-    pub fn currentFrame(self: *Self) frame.Frame {
-        return self.frames[self.framesIndex - 1];
+    pub fn currentFrame(self: *Self) *frame.Frame {
+        return &self.frames[self.framesIndex - 1];
     }
 
     pub fn pushFrame(self: *Self, f: frame.Frame) void {
@@ -110,9 +108,11 @@ pub const VM = struct {
     }
 
     pub fn run(self: *Self) !void {
-        var ip: usize = 0;
-        while (ip < self.instructions.len) {
-            const op = @as(code.Constants, @enumFromInt(self.instructions[ip]));
+        while (self.currentFrame().ip < (self.currentFrame().instructions().len - 1)) {
+            self.currentFrame().ip += 1;
+            const ip: usize = @intCast(self.currentFrame().ip);
+            const ins = self.currentFrame().instructions();
+            const op = @as(code.Constants, @enumFromInt(ins[ip]));
 
             switch (op) {
                 .OpConstant => {
@@ -122,8 +122,8 @@ pub const VM = struct {
                     // std.log.warn("instructions: {d}", .{self.instructions});
                     // @memcpy(&buf, self.instructions[start .. start + 2]);
                     // const constIndex = std.mem.readInt(u16, &buf, .big);
-                    const constIndex = readUint16(self.instructions, ip + 1);
-                    ip += 2;
+                    const constIndex = readUint16(ins, ip + 1);
+                    self.currentFrame().ip += 2;
 
                     const obj = self.constants[constIndex];
                     try self.push(obj);
@@ -150,37 +150,37 @@ pub const VM = struct {
                     _ = self.pop();
                 },
                 .OpJumpNotTruthy => {
-                    const pos = readUint16(self.instructions, ip + 1);
-                    ip += 2;
+                    const pos = readUint16(ins, ip + 1);
+                    self.currentFrame().ip += 2;
 
                     const condition = self.pop();
                     if (!condition.boolValue()) {
-                        ip = pos - 1;
+                        self.currentFrame().ip = pos - 1;
                     }
                 },
                 .OpJump => {
                     // var buf: [2]u8 = undefined;
                     // @memcpy(&buf, self.instructions[ip + 1 .. ip + 3]);
                     // const pos = std.mem.readInt(u16, &buf, .big);
-                    const pos = readUint16(self.instructions, ip + 1);
-                    ip = pos - 1;
+                    const pos = readUint16(ins, ip + 1);
+                    self.currentFrame().ip = pos - 1;
                 },
                 .OpGetGlobal => {
-                    const globalIndex = readUint16(self.instructions, ip + 1);
-                    ip += 2;
+                    const globalIndex = readUint16(ins, ip + 1);
+                    self.currentFrame().ip += 2;
 
                     const obj = self.globals[globalIndex];
                     try self.push(obj);
                 },
                 .OpSetGlobal => {
-                    const globalIndex = readUint16(self.instructions, ip + 1);
-                    ip += 2;
+                    const globalIndex = readUint16(ins, ip + 1);
+                    self.currentFrame().ip += 2;
 
                     self.globals[globalIndex] = self.pop();
                 },
                 .OpArray => {
-                    const numElements = readUint16(self.instructions, ip + 1);
-                    ip += 2;
+                    const numElements = readUint16(ins, ip + 1);
+                    self.currentFrame().ip += 2;
 
                     const array = try self.buildArray(self.sp - numElements, self.sp);
                     self.sp -= numElements;
@@ -188,8 +188,8 @@ pub const VM = struct {
                     try self.push(array);
                 },
                 .OpHash => {
-                    const numElements = readUint16(self.instructions, ip + 1);
-                    ip += 2;
+                    const numElements = readUint16(ins, ip + 1);
+                    self.currentFrame().ip += 2;
 
                     const hash = try self.buildHash(self.sp - numElements, self.sp);
                     self.sp -= numElements;
@@ -202,15 +202,34 @@ pub const VM = struct {
 
                     try self.executeIndexExpression(left, index);
                 },
-                .OpCall => {},
-                .OpReturnValue => {},
-                .OpReturn => {},
+                .OpCall => {
+                    const func = switch (self.stack[self.sp - 1]) {
+                        .compiledFunction => self.stack[self.sp - 1],
+                        else => return std.debug.panic("calling non-function: {s}", .{self.stack[self.sp - 1].typeId()}),
+                    };
+
+                    const f = frame.Frame.init(func);
+                    self.pushFrame(f);
+                },
+                .OpReturnValue => {
+                    const returnValue = self.pop();
+                    _ = self.popFrame();
+                    _ = self.pop();
+
+                    try self.push(returnValue);
+                },
+                .OpReturn => {
+                    _ = self.popFrame();
+                    _ = self.pop();
+
+                    try self.push(Null);
+                },
+                .OpSetLocal => {},
+                .OpGetLocal => {},
                 .OpNull => {
                     try self.push(Null);
                 },
             }
-
-            ip += 1;
         }
     }
 
@@ -590,6 +609,42 @@ test "test index expressions" {
         .{ .input = "{1: 1, 2: 2}[2]", .expected = .{ .integer = 2 } },
         .{ .input = "{1: 1}[0]", .expected = .nil },
         .{ .input = "{}[0]", .expected = .nil },
+    };
+
+    try runTests(tests);
+}
+
+test "test calling functions without arguments" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "let fivePlusTen = fn() { 5 + 10; }; fivePlusTen();", .expected = .{ .integer = 15 } },
+        .{ .input = "let one = fn() { 1; }; let two = fn() { 2; }; one() + two();", .expected = .{ .integer = 3 } },
+        .{ .input = "let a = fn() { 1; }; let b = fn() { a() + 1; }; let c = fn() { b() + 1; }; c();", .expected = .{ .integer = 3 } },
+    };
+
+    try runTests(tests);
+}
+
+test "test functions with return statement" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "let earlyExit = fn() { return 99; 100; }; earlyExit();", .expected = .{ .integer = 99 } },
+        .{ .input = "let earlyExit = fn() { return 99; return 100; }; earlyExit();", .expected = .{ .integer = 99 } },
+    };
+
+    try runTests(tests);
+}
+
+test "test functions without return value" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "let noReturn = fn() { }; noReturn();", .expected = .nil },
+        .{ .input = "let noReturn = fn() { }; let noReturnTwo = fn() { noReturn(); }; noReturn(); noReturnTwo();", .expected = .nil },
+    };
+
+    try runTests(tests);
+}
+
+test "test first class functions" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "let returnsOne = fn() { 1; }; let returnsOneReturner = fn() { returnsOne; }; returnsOneReturner()();", .expected = .{ .integer = 1 } },
     };
 
     try runTests(tests);

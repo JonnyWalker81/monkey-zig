@@ -13,6 +13,14 @@ pub const Frame = struct {
     }
 
     pub fn instructions(self: *Self) code.Instructions {
-        return self.func.instructions;
+        switch (self.func) {
+            .compiledFunction => |f| {
+                return f.instructions;
+            },
+            else => {
+                std.debug.print("Unsupported object type: {any}\n", .{self.func});
+                std.process.exit(1);
+            },
+        }
     }
 };

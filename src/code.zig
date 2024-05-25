@@ -73,6 +73,8 @@ pub const Constants = enum(u8) {
     OpCall = 0x15,
     OpReturnValue = 0x16,
     OpReturn = 0x17,
+    OpGetLocal = 0x18,
+    OpSetLocal = 0x19,
 };
 
 pub const Definition = struct {
@@ -209,6 +211,16 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .operandWidths = &[_]usize{},
     };
 
+    const opGetLocal = &Definition{
+        .name = "OpGetLocal",
+        .operandWidths = &[_]usize{1},
+    };
+
+    const opSetLocal = &Definition{
+        .name = "OpSetLocal",
+        .operandWidths = &[_]usize{1},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
@@ -235,6 +247,8 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     try definitions.put(allocator, @intFromEnum(Constants.OpCall), opCall);
     try definitions.put(allocator, @intFromEnum(Constants.OpReturnValue), opReturnValue);
     try definitions.put(allocator, @intFromEnum(Constants.OpReturn), opReturn);
+    try definitions.put(allocator, @intFromEnum(Constants.OpGetLocal), opGetLocal);
+    try definitions.put(allocator, @intFromEnum(Constants.OpSetLocal), opSetLocal);
 
     return definitions;
 }
@@ -257,6 +271,9 @@ pub fn readOperands(allocator: std.mem.Allocator, def: Definition, instructions:
                 }
                 const operand = std.mem.readInt(u16, &mem, .big);
                 operands[i] = operand;
+            },
+            1 => {
+                operands[i] = @intCast(instructions[offset]);
             },
             else => {
                 std.debug.panic("Unhandled operand width", .{});
@@ -305,6 +322,9 @@ pub fn make(allocator: std.mem.Allocator, definitions: std.AutoHashMapUnmanaged(
                     instruction[idx] = byte;
                 }
             },
+            1 => {
+                instruction[offset] = @intCast(operand);
+            },
             else => {
                 std.debug.panic("Unhandled operand width", .{});
             },
@@ -337,6 +357,11 @@ test "test make" {
             .operands = &[_]usize{},
             .expected = &[_]u8{@intFromEnum(Constants.OpAdd)},
         },
+        .{
+            .op = @intFromEnum(Constants.OpGetLocal),
+            .operands = &[_]usize{255},
+            .expected = &[_]u8{ @intFromEnum(Constants.OpGetLocal), 255 },
+        },
     };
 
     var definitions = try initDefinitions(test_allocator);
@@ -361,14 +386,16 @@ test "test instruction string" {
 
     const instructions = [_]Instructions{
         make(test_allocator, definitions, @intFromEnum(Constants.OpAdd), &[_]usize{}),
+        make(test_allocator, definitions, @intFromEnum(Constants.OpGetLocal), &[_]usize{1}),
         make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{2}),
         make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{65535}),
     };
 
     const expected: []const u8 =
         \\0000 OpAdd
-        \\0001 OpConstant 2
-        \\0004 OpConstant 65535
+        \\0001 OpGetLocal 1
+        \\0003 OpConstant 2
+        \\0006 OpConstant 65535
         \\
     ;
 
@@ -389,6 +416,7 @@ test "test instruction string" {
 test "test read operands" {
     const tests = [_]struct { op: Opcode, operands: []const usize, bytesRead: usize }{
         .{ .op = @intFromEnum(Constants.OpConstant), .operands = &[_]usize{65535}, .bytesRead = 2 },
+        .{ .op = @intFromEnum(Constants.OpGetLocal), .operands = &[_]usize{255}, .bytesRead = 1 },
     };
 
     var definitions = try initDefinitions(test_allocator);
