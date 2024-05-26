@@ -198,7 +198,7 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
 
     const opCall = &Definition{
         .name = "OpCall",
-        .operandWidths = &[_]usize{},
+        .operandWidths = &[_]usize{1},
     };
 
     const opReturnValue = &Definition{
@@ -300,6 +300,7 @@ pub fn make(allocator: std.mem.Allocator, definitions: std.AutoHashMapUnmanaged(
     }
 
     const instruction = allocator.alloc(u8, instructionLen) catch unreachable;
+    @memset(instruction, 0);
     instruction[0] = op;
 
     // std.log.warn("instructionLen: {d}", .{instructionLen});

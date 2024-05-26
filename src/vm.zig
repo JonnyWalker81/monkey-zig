@@ -16,6 +16,10 @@ const True = object.Object{ .boolean = true };
 const False = object.Object{ .boolean = false };
 const Null: object.Object = .nil;
 
+const VMError = error{
+    WrongNumberOfArguments,
+};
+
 pub const VM = struct {
     const Self = @This();
 
@@ -40,8 +44,12 @@ pub const VM = struct {
         var frames: [MaxFrames]frame.Frame = undefined;
         @memset(&frames, undefined);
 
-        const compiledFn = object.Object{ .compiledFunction = .{ .instructions = bytecode.instructions } };
-        const mainFrame = frame.Frame.init(compiledFn);
+        const compiledFn = object.Object{ .compiledFunction = .{
+            .instructions = bytecode.instructions,
+            .numLocals = 0,
+            .numParameters = 0,
+        } };
+        const mainFrame = frame.Frame.init(compiledFn, 0);
 
         frames[0] = mainFrame;
 
@@ -61,13 +69,27 @@ pub const VM = struct {
         var stack: [StackSize]object.Object = undefined;
         @memset(&stack, .nil);
 
+        var frames: [MaxFrames]frame.Frame = undefined;
+        @memset(&frames, undefined);
+
+        const compiledFn = object.Object{ .compiledFunction = .{
+            .instructions = bytecode.instructions,
+            .numLocals = 0,
+            .numParameters = 0,
+        } };
+        const mainFrame = frame.Frame.init(compiledFn, 0);
+
+        frames[0] = mainFrame;
+
         return .{
             .arena = arena,
             .constants = bytecode.constants,
-            .instructions = bytecode.instructions,
+            // .instructions = bytecode.instructions,
             .globals = globals,
             .stack = stack,
             .sp = 0,
+            .frames = frames,
+            .framesIndex = 1,
         };
     }
 
@@ -203,29 +225,39 @@ pub const VM = struct {
                     try self.executeIndexExpression(left, index);
                 },
                 .OpCall => {
-                    const func = switch (self.stack[self.sp - 1]) {
-                        .compiledFunction => self.stack[self.sp - 1],
-                        else => return std.debug.panic("calling non-function: {s}", .{self.stack[self.sp - 1].typeId()}),
-                    };
+                    const numArgs = ins[ip + 1];
+                    self.currentFrame().ip += 1;
 
-                    const f = frame.Frame.init(func);
-                    self.pushFrame(f);
+                    try self.callFunction(numArgs);
                 },
                 .OpReturnValue => {
                     const returnValue = self.pop();
-                    _ = self.popFrame();
-                    _ = self.pop();
+                    const f = self.popFrame();
+                    self.sp = @intCast(f.basePointer - 1);
 
                     try self.push(returnValue);
                 },
                 .OpReturn => {
-                    _ = self.popFrame();
-                    _ = self.pop();
+                    const f = self.popFrame();
+                    self.sp = @intCast(f.basePointer - 1);
 
                     try self.push(Null);
                 },
-                .OpSetLocal => {},
-                .OpGetLocal => {},
+                .OpSetLocal => {
+                    const localIndex = ins[ip + 1];
+                    self.currentFrame().ip += 1;
+
+                    const f = self.currentFrame();
+
+                    self.stack[@intCast(f.basePointer + localIndex)] = self.pop();
+                },
+                .OpGetLocal => {
+                    const localIndex = ins[ip + 1];
+                    self.currentFrame().ip += 1;
+
+                    const f = self.currentFrame();
+                    try self.push(self.stack[@intCast(f.basePointer + localIndex)]);
+                },
                 .OpNull => {
                     try self.push(Null);
                 },
@@ -237,6 +269,27 @@ pub const VM = struct {
         var buf: [2]u8 = undefined;
         @memcpy(&buf, s[ip .. ip + 2]);
         return std.mem.readInt(u16, &buf, .big);
+    }
+
+    fn callFunction(self: *Self, numArgs: u8) !void {
+        var numLocals: i32 = 0;
+        const func = switch (self.stack[self.sp - 1 - numArgs]) {
+            .compiledFunction => |f| blk: {
+                numLocals = f.numLocals;
+
+                if (numArgs != f.numParameters) {
+                    // return std.fmt.allocPrint(self.arena.allocator(), "wrong number of arguments: want={d}, got={d}", .{ f.numParameters, numArgs });
+                    return VMError.WrongNumberOfArguments;
+                }
+
+                break :blk self.stack[self.sp - 1 - numArgs];
+            },
+            else => return std.debug.panic("calling non-function: {s}", .{self.stack[self.sp - 1].typeId()}),
+        };
+
+        const f = frame.Frame.init(func, @intCast(self.sp - numArgs));
+        self.pushFrame(f);
+        self.sp = @as(usize, @intCast(f.basePointer + numLocals));
     }
 
     fn executeIndexExpression(self: *Self, left: object.Object, index: object.Object) !void {
@@ -645,9 +698,99 @@ test "test functions without return value" {
 test "test first class functions" {
     const tests = &[_]vmTestCase{
         .{ .input = "let returnsOne = fn() { 1; }; let returnsOneReturner = fn() { returnsOne; }; returnsOneReturner()();", .expected = .{ .integer = 1 } },
+        .{ .input = "let returnsOneReturner = fn() { let returnsOne = fn() { 1; }; returnsOne; }; returnsOneReturner()();", .expected = .{ .integer = 1 } },
     };
 
     try runTests(tests);
+}
+
+test "test calling functions with bindings" {
+    const tests = &[_]vmTestCase{
+        .{
+            .input = "let one = fn() { let one = 1; one }; one();",
+            .expected = .{ .integer = 1 },
+        },
+        .{
+            .input = "let oneAndTwo = fn() { let one = 1; let two = 2; one + two; }; oneAndTwo();",
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input = "let oneAndTwo = fn() { let one = 1; let two = 2; one + two; }; let threeAndFour = fn() { let three = 3; let four = 4; three + four; }; oneAndTwo() + threeAndFour();",
+            .expected = .{ .integer = 10 },
+        },
+        .{
+            .input = "let firstFoobar = fn() { let foobar = 50; foobar; }; let secondFoobar = fn() { let foobar = 100; foobar; }; firstFoobar() + secondFoobar();",
+            .expected = .{ .integer = 150 },
+        },
+        .{
+            .input = "let globalSeed = 50; let minusOne = fn() { let num = 1; globalSeed - num; }; let minusTwo = fn() { let num = 2; globalSeed - num; }; minusOne() + minusTwo();",
+            .expected = .{ .integer = 97 },
+        },
+    };
+
+    try runTests(tests);
+}
+
+test "test calling functions with arguments and bindings" {
+    const tests = &[_]vmTestCase{
+        .{
+            .input = "let identity = fn(a) { a; }; identity(4);",
+            .expected = .{ .integer = 4 },
+        },
+        .{
+            .input = "let sum = fn(a, b) { a + b; }; sum(1, 2);",
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input = "let sum = fn(a, b) { let c = a + b; c; }; sum(1, 2);",
+            .expected = .{ .integer = 3 },
+        },
+        .{
+            .input = "let sum = fn(a, b) { let c = a + b; c; }; sum(1, 2) + sum(3, 4);",
+            .expected = .{ .integer = 10 },
+        },
+        .{
+            .input = "let sum = fn(a, b) { let c = a + b; c; }; let outer = fn() { sum(1, 2) + sum(3, 4); }; outer();",
+            .expected = .{ .integer = 10 },
+        },
+        .{
+            .input = "let globalNum = 10; let sum = fn(a, b) { let c = a + b; c + globalNum; }; let outer = fn() { sum(1, 2) + sum(3, 4) + globalNum; }; outer() + globalNum;",
+            .expected = .{ .integer = 50 },
+        },
+    };
+
+    try runTests(tests);
+}
+
+test "test calling functions with wrong arguments" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]vmTestCase{
+        .{ .input = "fn() { 1; }(1);", .expected = .{ .string = "wrong number of arguments: want=0, got=1" } },
+        .{ .input = "fn(a) { a; }();", .expected = .{ .string = "wrong number of arugments: want=1, got=0" } },
+        .{ .input = "fn(a, b) { a + b; }(1);", .expected = .{ .string = "wrong number of arguments: want=2, got=1" } },
+        // .{ .input = "fn(a, b) { a + b; }(1, 2, 3);", .expected = .nil },
+        // .{ .input = "fn(a, b) { a + b; }();", .expected = .nil },
+    };
+
+    for (tests) |tt| {
+        // std.log.warn("input(vm.runTests): {c}", .{tt.input});
+        var helper = parse(tt.input);
+        defer helper.deinit();
+        var comp = compiler.Compiler.init(test_allocator, definitions);
+        try comp.compile(helper.node);
+        defer comp.deinit();
+
+        var vm = VM.init(test_allocator, comp.bytecode());
+        defer vm.deinit();
+        const res = vm.run();
+        try std.testing.expectEqual(VMError.WrongNumberOfArguments, res);
+        // const stackElem = vm.lastPoppedStackElem();
+        // try testExpectedObject(tt.expected, stackElem);
+    }
+
+    // try runTests(tests);
 }
 
 pub fn runTests(tests: []const vmTestCase) !void {
@@ -674,11 +817,11 @@ fn testExpectedObject(expected: ExpectedValue, actual: object.Object) !void {
     switch (expected) {
         .integer => {
             const i = actual.intValue();
-            assert(i == expected.integer);
+            try expectEqual(i, expected.integer);
         },
         .boolean => {
             const b = actual.boolValue();
-            assert(b == expected.boolean);
+            try expectEqual(b, expected.boolean);
         },
         .string => {
             const s = actual.stringValue();

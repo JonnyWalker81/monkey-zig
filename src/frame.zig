@@ -7,9 +7,10 @@ pub const Frame = struct {
 
     func: object.Object,
     ip: i32,
+    basePointer: i32 = 0,
 
-    pub fn init(func: object.Object) Frame {
-        return Frame{ .func = func, .ip = -1 };
+    pub fn init(func: object.Object, basePointer: i32) Frame {
+        return Frame{ .func = func, .ip = -1, .basePointer = basePointer };
     }
 
     pub fn instructions(self: *Self) code.Instructions {

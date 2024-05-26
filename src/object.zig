@@ -48,6 +48,8 @@ pub const Object = union(enum) {
     },
     compiledFunction: struct {
         instructions: code.Instructions,
+        numLocals: i32,
+        numParameters: i32,
     },
     string: []const u8,
     builtin: BuiltinFn,

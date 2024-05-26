@@ -1,12 +1,12 @@
 const std = @import("std");
 
 pub const SymbolScope = enum {
-    Global,
-    Local,
+    global,
+    local,
     // Local,
     pub const SymbolNameTable = [@typeInfo(SymbolScope).Enum.fields.len][:0]const u8{
-        "Global",
-        "Local",
+        "global",
+        "local",
     };
 
     pub fn str(self: SymbolScope) [:0]const u8 {
@@ -25,7 +25,7 @@ pub const SymbolTable = struct {
     // arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
     store: std.StringHashMap(Symbol),
-    num_definitions: usize,
+    num_definitions: i32,
     outer: ?*SymbolTable,
 
     pub fn init(allocator: std.mem.Allocator) *SymbolTable {
@@ -57,28 +57,32 @@ pub const SymbolTable = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // self.arena.deinit();
+        // if (self.outer) |outer| {
+        //     outer.deinit();
+        // }
+
         self.store.deinit();
-        if (self.outer) |outer| {
-            outer.deinit();
-        }
+        // self.arena.deinit();
         // self.allocator.destroy(self);
     }
 
     pub fn define(self: *Self, name: []const u8) !Symbol {
+        // std.log.warn("define: {s}", .{name});
         var symbol: Symbol = undefined;
 
+        // std.log.warn("define: {s}", .{name});
+        // std.log.warn("define outer: {any}", .{self.outer});
         if (self.outer == null) {
             symbol = .{
                 .name = name,
-                .scope = SymbolScope.Global,
-                .index = self.num_definitions,
+                .scope = SymbolScope.global,
+                .index = @intCast(self.num_definitions),
             };
         } else {
             symbol = .{
                 .name = name,
-                .scope = SymbolScope.Local,
-                .index = self.num_definitions,
+                .scope = SymbolScope.local,
+                .index = @intCast(self.num_definitions),
             };
         }
 
@@ -102,35 +106,42 @@ pub const SymbolTable = struct {
 const test_allocator = std.testing.allocator;
 const expectEqual = std.testing.expectEqual;
 test "test define" {
-    const expected = SymbolTable.init(test_allocator);
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
 
-    try expected.store.put("a", Symbol{ .name = "a", .scope = SymbolScope.Global, .index = 0 });
-    try expected.store.put("b", Symbol{ .name = "b", .scope = SymbolScope.Global, .index = 1 });
-    try expected.store.put("c", Symbol{ .name = "c", .scope = SymbolScope.Global, .index = 0 });
-    try expected.store.put("d", Symbol{ .name = "d", .scope = SymbolScope.Global, .index = 1 });
-    try expected.store.put("e", Symbol{ .name = "e", .scope = SymbolScope.Global, .index = 0 });
-    try expected.store.put("f", Symbol{ .name = "f", .scope = SymbolScope.Global, .index = 1 });
+    const expected = SymbolTable.init(arena.allocator());
+    // defer test_allocator.destroy(expected);
 
-    var global = SymbolTable.init(test_allocator);
-    defer test_allocator.destroy(global);
-    defer global.deinit();
+    try expected.store.put("a", Symbol{ .name = "a", .scope = SymbolScope.global, .index = 0 });
+    try expected.store.put("b", Symbol{ .name = "b", .scope = SymbolScope.global, .index = 1 });
+    try expected.store.put("c", Symbol{ .name = "c", .scope = SymbolScope.local, .index = 0 });
+    try expected.store.put("d", Symbol{ .name = "d", .scope = SymbolScope.local, .index = 1 });
+    try expected.store.put("e", Symbol{ .name = "e", .scope = SymbolScope.local, .index = 0 });
+    try expected.store.put("f", Symbol{ .name = "f", .scope = SymbolScope.local, .index = 1 });
+
+    var global = SymbolTable.init(arena.allocator());
+    // defer global.deinit();
+    // defer test_allocator.destroy(global);
+
     const a = try global.define("a");
     try expectEqual(a, expected.store.get("a").?);
 
     const b = try global.define("b");
     try expectEqual(b, expected.store.get("b").?);
 
-    var firstLocal = SymbolTable.initEnclosedScope(test_allocator, global);
-    defer test_allocator.destroy(firstLocal);
+    var firstLocal = SymbolTable.initEnclosedScope(arena.allocator(), global);
     defer firstLocal.deinit();
+    // defer test_allocator.destroy(firstLocal);
+
     const c = try firstLocal.define("c");
     try expectEqual(c, expected.store.get("c").?);
     const d = try firstLocal.define("d");
     try expectEqual(d, expected.store.get("d").?);
 
-    var secondLocal = SymbolTable.initEnclosedScope(test_allocator, firstLocal);
-    defer test_allocator.destroy(secondLocal);
-    defer secondLocal.deinit();
+    var secondLocal = SymbolTable.initEnclosedScope(arena.allocator(), firstLocal);
+    // defer secondLocal.deinit();
+    // defer test_allocator.destroy(secondLocal);
+
     const e = try secondLocal.define("e");
     try expectEqual(e, expected.store.get("e").?);
     const f = try secondLocal.define("f");
@@ -141,12 +152,13 @@ test "test resolve global" {
     var global = SymbolTable.init(test_allocator);
     defer test_allocator.destroy(global);
     defer global.deinit();
+
     _ = try global.define("a");
     _ = try global.define("b");
 
     const expected = [_]Symbol{
-        Symbol{ .name = "a", .scope = SymbolScope.Global, .index = 0 },
-        Symbol{ .name = "b", .scope = SymbolScope.Global, .index = 1 },
+        Symbol{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+        Symbol{ .name = "b", .scope = SymbolScope.global, .index = 1 },
     };
 
     for (expected) |sym| {
@@ -156,23 +168,25 @@ test "test resolve global" {
 }
 
 test "test resolve local" {
-    var global = SymbolTable.init(test_allocator);
-    defer test_allocator.destroy(global);
-    defer global.deinit();
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
+    var global = SymbolTable.init(arena.allocator());
+    // defer global.deinit();
+    // defer test_allocator.destroy(global);
     _ = try global.define("a");
     _ = try global.define("b");
 
-    var local = SymbolTable.initEnclosedScope(test_allocator, global);
-    defer test_allocator.destroy(local);
-    defer local.deinit();
+    var local = SymbolTable.initEnclosedScope(arena.allocator(), global);
+    // defer test_allocator.destroy(local);
+    // defer local.deinit();
     _ = try local.define("c");
     _ = try local.define("d");
 
     const expected = [_]Symbol{
-        Symbol{ .name = "a", .scope = SymbolScope.Global, .index = 0 },
-        Symbol{ .name = "b", .scope = SymbolScope.Global, .index = 1 },
-        Symbol{ .name = "c", .scope = SymbolScope.Global, .index = 0 },
-        Symbol{ .name = "d", .scope = SymbolScope.Global, .index = 1 },
+        Symbol{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+        Symbol{ .name = "b", .scope = SymbolScope.global, .index = 1 },
+        Symbol{ .name = "c", .scope = SymbolScope.local, .index = 0 },
+        Symbol{ .name = "d", .scope = SymbolScope.local, .index = 1 },
     };
 
     for (expected) |sym| {
@@ -207,19 +221,19 @@ test "test resolves nested local" {
         .{
             .table = firstLocal,
             .expectedSymbols = &[_]Symbol{
-                Symbol{ .name = "a", .scope = SymbolScope.Global, .index = 0 },
-                Symbol{ .name = "b", .scope = SymbolScope.Global, .index = 1 },
-                Symbol{ .name = "c", .scope = SymbolScope.Global, .index = 0 },
-                Symbol{ .name = "d", .scope = SymbolScope.Global, .index = 1 },
+                Symbol{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+                Symbol{ .name = "b", .scope = SymbolScope.global, .index = 1 },
+                Symbol{ .name = "c", .scope = SymbolScope.local, .index = 0 },
+                Symbol{ .name = "d", .scope = SymbolScope.local, .index = 1 },
             },
         },
         .{
             .table = secondLocal,
             .expectedSymbols = &[_]Symbol{
-                Symbol{ .name = "a", .scope = SymbolScope.Global, .index = 0 },
-                Symbol{ .name = "b", .scope = SymbolScope.Global, .index = 1 },
-                Symbol{ .name = "e", .scope = SymbolScope.Global, .index = 0 },
-                Symbol{ .name = "f", .scope = SymbolScope.Global, .index = 1 },
+                Symbol{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+                Symbol{ .name = "b", .scope = SymbolScope.global, .index = 1 },
+                Symbol{ .name = "e", .scope = SymbolScope.local, .index = 0 },
+                Symbol{ .name = "f", .scope = SymbolScope.local, .index = 1 },
             },
         },
     };
