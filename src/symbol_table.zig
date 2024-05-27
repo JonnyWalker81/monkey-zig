@@ -3,10 +3,12 @@ const std = @import("std");
 pub const SymbolScope = enum {
     global,
     local,
-    // Local,
+    builtin,
+
     pub const SymbolNameTable = [@typeInfo(SymbolScope).Enum.fields.len][:0]const u8{
         "global",
         "local",
+        "builtin",
     };
 
     pub fn str(self: SymbolScope) [:0]const u8 {
@@ -88,6 +90,17 @@ pub const SymbolTable = struct {
 
         try self.store.put(name, symbol);
         self.num_definitions += 1;
+        return symbol;
+    }
+
+    pub fn defineBuiltin(self: *Self, index: usize, name: []const u8) !Symbol {
+        const symbol = .{
+            .name = name,
+            .scope = SymbolScope.builtin,
+            .index = index,
+        };
+
+        try self.store.put(name, symbol);
         return symbol;
     }
 
@@ -242,6 +255,40 @@ test "test resolves nested local" {
         for (tt.expectedSymbols) |sym| {
             const result = tt.table.resolve(sym.name);
             try expectEqual(result, sym);
+        }
+    }
+}
+
+test "test define resolve builtins" {
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
+    var global = SymbolTable.init(arena.allocator());
+    // defer global.deinit();
+    // defer test_allocator.destroy(global);
+    const firstLocal = SymbolTable.initEnclosedScope(arena.allocator(), global);
+    const secondLocal = SymbolTable.initEnclosedScope(arena.allocator(), firstLocal);
+
+    const expected = &[_]Symbol{
+        .{ .name = "a", .scope = SymbolScope.builtin, .index = 0 },
+        .{ .name = "c", .scope = SymbolScope.builtin, .index = 1 },
+        .{ .name = "e", .scope = SymbolScope.builtin, .index = 2 },
+        .{ .name = "f", .scope = SymbolScope.builtin, .index = 3 },
+    };
+
+    for (expected, 0..) |sym, i| {
+        _ = try global.defineBuiltin(i, sym.name);
+    }
+
+    const tables = &[_]*SymbolTable{
+        global,
+        firstLocal,
+        secondLocal,
+    };
+
+    for (tables) |table| {
+        for (expected) |sym| {
+            const result = table.resolve(sym.name);
+            try expectEqual(result.?, sym);
         }
     }
 }

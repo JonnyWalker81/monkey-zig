@@ -33,6 +33,22 @@ pub const HashPair = struct {
     value: *Object,
 };
 
+pub const CompiledFunction = struct {
+    const Self = @This();
+
+    instructions: code.Instructions,
+    numLocals: i32,
+    numParameters: i32,
+};
+
+pub const Function = struct {
+    const Self = @This();
+
+    parameters: ArrayList(*ast.Identifier),
+    body: *ast.BlockStatement,
+    env: *environment.Environment,
+};
+
 pub const Object = union(enum) {
     const Self = @This();
     // allocator: std.mem.Allocator,
@@ -41,16 +57,8 @@ pub const Object = union(enum) {
     integer: i64,
     boolean: bool,
     returnValue: *Self,
-    function: struct {
-        parameters: ArrayList(*ast.Identifier),
-        body: *ast.BlockStatement,
-        env: *environment.Environment,
-    },
-    compiledFunction: struct {
-        instructions: code.Instructions,
-        numLocals: i32,
-        numParameters: i32,
-    },
+    function: Function,
+    compiledFunction: CompiledFunction,
     string: []const u8,
     builtin: BuiltinFn,
     array: ArrayList(*Self),
@@ -125,6 +133,20 @@ pub const Object = union(enum) {
                 return .{ .type = "STRING", .value = Wyhash.hash(0, s) };
             },
             else => .{ .type = "NULL", .value = 0 },
+        };
+    }
+
+    pub fn compiledFn(self: *const Self) CompiledFunction {
+        return switch (self.*) {
+            .compiledFunction => |cf| cf,
+            else => std.debug.panic("not a compiled function", .{}),
+        };
+    }
+
+    pub fn builtinFn(self: *const Self) BuiltinFn {
+        return switch (self.*) {
+            .builtin => |b| b,
+            else => std.debug.panic("not a builtin function", .{}),
         };
     }
 

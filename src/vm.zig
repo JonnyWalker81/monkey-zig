@@ -7,6 +7,7 @@ const code = @import("code.zig");
 const compiler = @import("compiler.zig");
 const ArrayList = std.ArrayList;
 const frame = @import("frame.zig");
+const builtins = @import("builtins.zig");
 
 pub const StackSize = 2048;
 pub const GlobalSize = 65536;
@@ -18,6 +19,7 @@ const Null: object.Object = .nil;
 
 const VMError = error{
     WrongNumberOfArguments,
+    CallingInvalidFunction,
 };
 
 pub const VM = struct {
@@ -228,7 +230,7 @@ pub const VM = struct {
                     const numArgs = ins[ip + 1];
                     self.currentFrame().ip += 1;
 
-                    try self.callFunction(numArgs);
+                    try self.executeCall(numArgs);
                 },
                 .OpReturnValue => {
                     const returnValue = self.pop();
@@ -258,6 +260,13 @@ pub const VM = struct {
                     const f = self.currentFrame();
                     try self.push(self.stack[@intCast(f.basePointer + localIndex)]);
                 },
+                .OpGetBuiltin => {
+                    const builtinIndex = ins[ip + 1];
+                    self.currentFrame().ip += 1;
+
+                    const definition = builtins.Builtins[builtinIndex];
+                    try self.push(definition.builtin);
+                },
                 .OpNull => {
                     try self.push(Null);
                 },
@@ -271,25 +280,58 @@ pub const VM = struct {
         return std.mem.readInt(u16, &buf, .big);
     }
 
-    fn callFunction(self: *Self, numArgs: u8) !void {
-        var numLocals: i32 = 0;
-        const func = switch (self.stack[self.sp - 1 - numArgs]) {
-            .compiledFunction => |f| blk: {
-                numLocals = f.numLocals;
+    fn callFunction(self: *Self, callee: *const object.Object, numArgs: u8) !void {
+        const func = callee.compiledFn();
+        if (numArgs != func.numParameters) {
+            // return std.fmt.allocPrint(self.arena.allocator(), "wrong number of arguments: want={d}, got={d}", .{ f.numParameters, numArgs });
+            return VMError.WrongNumberOfArguments;
+        }
 
-                if (numArgs != f.numParameters) {
-                    // return std.fmt.allocPrint(self.arena.allocator(), "wrong number of arguments: want={d}, got={d}", .{ f.numParameters, numArgs });
-                    return VMError.WrongNumberOfArguments;
-                }
-
-                break :blk self.stack[self.sp - 1 - numArgs];
-            },
-            else => return std.debug.panic("calling non-function: {s}", .{self.stack[self.sp - 1].typeId()}),
-        };
-
-        const f = frame.Frame.init(func, @intCast(self.sp - numArgs));
+        const f = frame.Frame.init(callee.*, @intCast(self.sp - numArgs));
         self.pushFrame(f);
-        self.sp = @as(usize, @intCast(f.basePointer + numLocals));
+        self.sp = @as(usize, @intCast(f.basePointer + func.numLocals));
+    }
+
+    fn callBuiltin(self: *Self, builtin: *const object.Object, numArgs: u8) !void {
+        const func = builtin.builtinFn();
+        const args = self.stack[self.sp - numArgs .. self.sp];
+        var argPtrs = std.ArrayList(*object.Object).init(self.arena.allocator());
+        for (args) |arg| {
+            const a = try self.arena.allocator().create(object.Object);
+            a.* = arg;
+            try argPtrs.append(a);
+        }
+
+        const s = try argPtrs.toOwnedSlice();
+        const result = func(self.arena.allocator(), s);
+        self.sp = self.sp - numArgs - 1;
+
+        if (result) |r| {
+            try self.push(r.*);
+        } else {
+            try self.push(.nil);
+        }
+    }
+
+    fn executeCall(self: *Self, numArgs: u8) !void {
+        const callee = self.stack[self.sp - 1 - numArgs];
+        switch (callee) {
+            .compiledFunction => {
+                return try self.callFunction(&callee, numArgs);
+            },
+            .builtin => {
+                // const builtin = callee.builtin;
+                // const args = &self.stack[self.sp - numArgs .. self.sp];
+                // const result = try builtin.fn(self.arena.allocator(), args);
+                // self.sp -= numArgs + 1;
+                // try self.push(result);
+                return try self.callBuiltin(&callee, numArgs);
+            },
+            else => {
+                // return std.debug.panic("calling non-function: {s}", .{callee.typeId()});
+                return VMError.CallingInvalidFunction;
+            },
+        }
     }
 
     fn executeIndexExpression(self: *Self, left: object.Object, index: object.Object) !void {
@@ -513,6 +555,7 @@ const ExpectedValue = union(enum) {
     string: []const u8,
     intArray: []const i64,
     hash: []const hashpair,
+    err: []const u8,
     nil,
 };
 
@@ -793,12 +836,37 @@ test "test calling functions with wrong arguments" {
     // try runTests(tests);
 }
 
+test "test builtin functions" {
+    const tests = &[_]vmTestCase{
+        .{ .input = "len(\"\")", .expected = .{ .integer = 0 } },
+        .{ .input = "len(\"four\")", .expected = .{ .integer = 4 } },
+        .{ .input = "len(\"hello world\")", .expected = .{ .integer = 11 } },
+        .{ .input = "len(1)", .expected = .{ .err = "argument to `len` not supported, got INTEGER" } },
+        .{ .input = "len(\"one\", \"two\")", .expected = .{ .err = "wrong number of arguments. got=2, want=1" } },
+        .{ .input = "len([1, 2, 3])", .expected = .{ .integer = 3 } },
+        .{ .input = "len([])", .expected = .{ .integer = 0 } },
+        .{ .input = "puts(\"hello\", \"world\")", .expected = .nil },
+        .{ .input = "first([1, 2, 3])", .expected = .{ .integer = 1 } },
+        .{ .input = "first([])", .expected = .nil },
+        .{ .input = "first(1)", .expected = .{ .err = "argument to `first` must be ARRAY, got INTEGER" } },
+        .{ .input = "last([1, 2, 3])", .expected = .{ .integer = 3 } },
+        .{ .input = "last([])", .expected = .nil },
+        .{ .input = "last(1)", .expected = .{ .err = "argument to `last` must be ARRAY, got INTEGER" } },
+        .{ .input = "rest([1, 2, 3])", .expected = .{ .intArray = &[_]i64{ 2, 3 } } },
+        .{ .input = "rest([])", .expected = .nil },
+        .{ .input = "push([], 1)", .expected = .{ .intArray = &[_]i64{1} } },
+        // .{ .input = "push(1, 1)", .expected = .{ .err = "argument to `push` must be ARRAY, got INTEGER" } },
+    };
+
+    try runTests(tests);
+}
+
 pub fn runTests(tests: []const vmTestCase) !void {
     var definitions = try code.initDefinitions(test_allocator);
     defer definitions.deinit(test_allocator);
 
     for (tests) |tt| {
-        // std.log.warn("input(vm.runTests): {c}", .{tt.input});
+        // std.log.warn("input(vm.runTests): {s}", .{tt.input});
         var helper = parse(tt.input);
         defer helper.deinit();
         var comp = compiler.Compiler.init(test_allocator, definitions);
@@ -837,6 +905,10 @@ fn testExpectedObject(expected: ExpectedValue, actual: object.Object) !void {
                 const actualInt = actualElem.intValue();
                 try expectEqual(e, actualInt);
             }
+        },
+        .err => {
+            const s = actual.err;
+            try expectEqualSlices(u8, s, expected.err);
         },
         .hash => {
             const hash = actual.hash;

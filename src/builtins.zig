@@ -1,16 +1,16 @@
 const std = @import("std");
 const object = @import("object.zig");
 
-const Builtins = [_]struct {
+pub const Builtins = [_]struct {
     name: []const u8,
-    Builtin: object.Object,
+    builtin: object.Object,
 }{
-    .{ .name = "len", .Builtin = .{ .builtin = len } },
-    .{ .name = "puts", .Builtin = .{ .builtin = puts } },
-    .{ .name = "first", .Builtin = .{ .builtin = first } },
-    .{ .name = "last", .Builtin = .{ .builtin = last } },
-    .{ .name = "rest", .Builtin = .{ .builtin = rest } },
-    .{ .name = "push", .Builtin = .{ .builtin = push } },
+    .{ .name = "len", .builtin = .{ .builtin = len } },
+    .{ .name = "puts", .builtin = .{ .builtin = puts } },
+    .{ .name = "first", .builtin = .{ .builtin = first } },
+    .{ .name = "last", .builtin = .{ .builtin = last } },
+    .{ .name = "rest", .builtin = .{ .builtin = rest } },
+    .{ .name = "push", .builtin = .{ .builtin = push } },
 };
 
 fn len(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Object {
@@ -135,7 +135,7 @@ pub fn puts(allocator: std.mem.Allocator, args: []*object.Object) ?*object.Objec
 pub fn get_builtin_by_name(name: []const u8) ?object.Object {
     for (Builtins) |b| {
         if (std.mem.eql(u8, b.name, name)) {
-            return b.Builtin;
+            return b.builtin;
         }
     }
     return null;

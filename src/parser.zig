@@ -229,6 +229,7 @@ pub const Parser = struct {
     pub fn parseProgram(self: *Self) program.Program {
         var prog = program.Program.init(self.arena.allocator());
         while (self.curToken != .eof) {
+            // std.log.warn("curToken: {s}", .{self.curToken});
             const stmt = self.parseStatement();
             prog.statements.append(stmt) catch {
                 std.debug.panic("failed to append statement", .{});

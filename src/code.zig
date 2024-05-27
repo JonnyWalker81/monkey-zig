@@ -75,6 +75,7 @@ pub const Constants = enum(u8) {
     OpReturn = 0x17,
     OpGetLocal = 0x18,
     OpSetLocal = 0x19,
+    OpGetBuiltin = 0x1a,
 };
 
 pub const Definition = struct {
@@ -221,6 +222,11 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .operandWidths = &[_]usize{1},
     };
 
+    const opGetBuiltin = &Definition{
+        .name = "OpGetBuiltin",
+        .operandWidths = &[_]usize{1},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
@@ -249,6 +255,7 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     try definitions.put(allocator, @intFromEnum(Constants.OpReturn), opReturn);
     try definitions.put(allocator, @intFromEnum(Constants.OpGetLocal), opGetLocal);
     try definitions.put(allocator, @intFromEnum(Constants.OpSetLocal), opSetLocal);
+    try definitions.put(allocator, @intFromEnum(Constants.OpGetBuiltin), opGetBuiltin);
 
     return definitions;
 }

@@ -9,6 +9,7 @@ const compiler = @import("compiler.zig");
 const vm = @import("vm.zig");
 const object = @import("object.zig");
 const sym = @import("symbol_table.zig");
+const builtins = @import("builtins.zig");
 
 // monkey face in zig multi-line string constant
 const monkeyFace =
@@ -52,9 +53,11 @@ fn start() !void {
 
     const symbolTable = sym.SymbolTable.init(arena.allocator());
 
-    while (true) {
-        // defer _ = gpa.deinit();
+    for (builtins.Builtins, 0..) |builtin, i| {
+        _ = try symbolTable.defineBuiltin(i, builtin.name);
+    }
 
+    while (true) {
         try stdout.print("{s}", .{prompt});
         try bw.flush();
 

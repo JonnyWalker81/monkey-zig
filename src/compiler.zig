@@ -6,6 +6,7 @@ const lexer = @import("lexer.zig");
 const parser = @import("parser.zig");
 const utils = @import("utils.zig");
 const sym = @import("symbol_table.zig");
+const builtins = @import("builtins.zig");
 
 const EmittedInstruction = struct {
     opcode: code.Opcode,
@@ -66,6 +67,13 @@ pub const Compiler = struct {
         // var scopes = std.ArrayList(CompilationScope).init(allocator);
         var scopes = std.ArrayList(CompilationScope).init(allocator);
         scopes.append(mainScope) catch unreachable;
+
+        const symbolTable = sym.SymbolTable.init(allocator);
+
+        for (builtins.Builtins, 0..) |builtin, i| {
+            _ = symbolTable.defineBuiltin(i, builtin.name) catch unreachable;
+        }
+
         return Compiler{
             .arena = arena,
             .allocator = allocator,
@@ -74,7 +82,7 @@ pub const Compiler = struct {
             .definitions = definitions,
             // .lastInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
             // .previousInstruction = EmittedInstruction.init(@intFromEnum(code.Constants.OpConstant), 0),
-            .symbolTable = sym.SymbolTable.init(allocator),
+            .symbolTable = symbolTable,
             .scopes = scopes,
             .scopeIndex = 0,
         };
@@ -218,15 +226,7 @@ pub const Compiler = struct {
                     .identifier => |i| {
                         const symbol = self.symbolTable.resolve(i.identifier);
                         if (symbol) |s| {
-                            switch (s.scope) {
-                                .global => {
-                                    _ = try self.emit(@intFromEnum(code.Constants.OpGetGlobal), &[_]usize{s.index});
-                                },
-                                else => {
-                                    // std.log.warn("get local: {any}", .{s.index});
-                                    _ = try self.emit(@intFromEnum(code.Constants.OpGetLocal), &[_]usize{s.index});
-                                },
-                            }
+                            try self.loadSymbols(s);
                         } else {
                             std.debug.print("undefined variable: {s}\n", .{i.identifier});
                             return;
@@ -346,6 +346,20 @@ pub const Compiler = struct {
                 for (bs.statements.items) |stmt| {
                     try self.compile(.{ .statement = stmt });
                 }
+            },
+        }
+    }
+
+    fn loadSymbols(self: *Self, symbol: sym.Symbol) !void {
+        switch (symbol.scope) {
+            .global => {
+                _ = try self.emit(@intFromEnum(code.Constants.OpGetGlobal), &[_]usize{symbol.index});
+            },
+            .local => {
+                _ = try self.emit(@intFromEnum(code.Constants.OpGetLocal), &[_]usize{symbol.index});
+            },
+            .builtin => {
+                _ = try self.emit(@intFromEnum(code.Constants.OpGetBuiltin), &[_]usize{symbol.index});
             },
         }
     }
@@ -1396,6 +1410,83 @@ test "test let statement scopes" {
                 code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
             },
         },
+    };
+
+    try runCompilerTests(tests, definitions);
+
+    for (tests) |tt| {
+        for (tt.expectedInstructions) |ins| {
+            test_allocator.free(ins);
+        }
+
+        for (tt.expectedConstants) |c| {
+            switch (c) {
+                .instructions => |i| {
+                    for (i) |ins| {
+                        test_allocator.free(ins);
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+}
+
+test "test built-in functions" {
+    var definitions = try code.initDefinitions(test_allocator);
+    defer definitions.deinit(test_allocator);
+
+    const tests = &[_]CompilerTestCase{
+        CompilerTestCase{
+            .input = "len([]); push([], 1);",
+            .expectedConstants = &[_]val{
+                .{ .int = 1 },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGetBuiltin), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpCall), &[_]usize{1}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGetBuiltin), &[_]usize{5}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpCall), &[_]usize{2}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        CompilerTestCase{
+            .input = "fn() { len([]) }",
+            .expectedConstants = &[_]val{
+                .{
+                    .instructions = &[_]code.Instructions{
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpGetBuiltin), &[_]usize{0}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{0}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpCall), &[_]usize{1}),
+                        code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
+                    },
+                },
+            },
+            .expectedInstructions = &[_]code.Instructions{
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+                code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpPop), &[_]usize{}),
+            },
+        },
+        // CompilerTestCase{
+        //     .input = "fn() { len([1, 2, 3]) }",
+        //     .expectedConstants = &[_]val{
+        //         .{ .int = 1 },
+        //         .{ .int = 2 },
+        //         .{ .int = 3 },
+        //     },
+        //     .expectedInstructions = &[_]code.Instructions{
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{0}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{1}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpConstant), &[_]usize{2}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpArray), &[_]usize{3}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpCall), &[_]usize{1}),
+        //         code.make(test_allocator, definitions, @intFromEnum(code.Constants.OpReturnValue), &[_]usize{}),
+        //     },
+        // },
     };
 
     try runCompilerTests(tests, definitions);
