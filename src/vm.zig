@@ -143,7 +143,7 @@ pub const VM = struct {
     }
 
     pub fn run(self: *Self) !void {
-        while (self.currentFrame().ip < (self.currentFrame().instructions().len - 1)) {
+        while (self.currentFrame().ip < (@as(i64, @intCast(self.currentFrame().instructions().len)) - 1)) {
             self.currentFrame().ip += 1;
             const ip: usize = @intCast(self.currentFrame().ip);
             const ins = self.currentFrame().instructions();

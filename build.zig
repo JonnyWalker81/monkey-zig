@@ -52,6 +52,24 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const benchmark = b.addExecutable(.{
+        .name = "monkey",
+        .root_source_file = .{ .path = "src/bench.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const run_benchmark = b.addRunArtifact(benchmark);
+
+    run_benchmark.step.dependOn(b.getInstallStep());
+
+    if (b.args) |args| {
+        run_benchmark.addArgs(args);
+    }
+
+    const benchmark_step = b.step("bench", "Run benchmarks");
+    benchmark_step.dependOn(&run_benchmark.step);
+
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
