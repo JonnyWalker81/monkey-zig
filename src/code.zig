@@ -40,6 +40,9 @@ pub fn fmtInstruction(allocator: std.mem.Allocator, def: Definition, operands: [
         1 => {
             return try std.fmt.allocPrint(allocator, "{s} {d}", .{ def.name, operands[0] });
         },
+        2 => {
+            return try std.fmt.allocPrint(allocator, "{s} {d} {d}", .{ def.name, operands[0], operands[1] });
+        },
         else => {},
     }
 
@@ -76,6 +79,9 @@ pub const Constants = enum(u8) {
     OpGetLocal = 0x18,
     OpSetLocal = 0x19,
     OpGetBuiltin = 0x1a,
+    OpClosure = 0x1b,
+    OpGetFree = 0x1c,
+    OpCurrentClosure = 0x1d,
 };
 
 pub const Definition = struct {
@@ -227,6 +233,21 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
         .operandWidths = &[_]usize{1},
     };
 
+    const opClosure = &Definition{
+        .name = "OpClosure",
+        .operandWidths = &[_]usize{ 2, 1 },
+    };
+
+    const opGetFree = &Definition{
+        .name = "OpGetFree",
+        .operandWidths = &[_]usize{1},
+    };
+
+    const opCurrentClosure = &Definition{
+        .name = "OpCurrentClosure",
+        .operandWidths = &[_]usize{},
+    };
+
     // std.log.warn("Bit size: {d}", .{@bitSizeOf(@TypeOf(@intFromEnum(Constants.OpConstant)))});
     // Definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant) catch unreachable;
     try definitions.put(allocator, @intFromEnum(Constants.OpConstant), opConstant);
@@ -256,6 +277,9 @@ pub fn initDefinitions(allocator: std.mem.Allocator) !Definitions {
     try definitions.put(allocator, @intFromEnum(Constants.OpGetLocal), opGetLocal);
     try definitions.put(allocator, @intFromEnum(Constants.OpSetLocal), opSetLocal);
     try definitions.put(allocator, @intFromEnum(Constants.OpGetBuiltin), opGetBuiltin);
+    try definitions.put(allocator, @intFromEnum(Constants.OpClosure), opClosure);
+    try definitions.put(allocator, @intFromEnum(Constants.OpGetFree), opGetFree);
+    try definitions.put(allocator, @intFromEnum(Constants.OpCurrentClosure), opCurrentClosure);
 
     return definitions;
 }
@@ -370,6 +394,11 @@ test "test make" {
             .operands = &[_]usize{255},
             .expected = &[_]u8{ @intFromEnum(Constants.OpGetLocal), 255 },
         },
+        .{
+            .op = @intFromEnum(Constants.OpClosure),
+            .operands = &[_]usize{ 65534, 255 },
+            .expected = &[_]u8{ @intFromEnum(Constants.OpClosure), 255, 254, 255 },
+        },
     };
 
     var definitions = try initDefinitions(test_allocator);
@@ -380,10 +409,10 @@ test "test make" {
         defer test_allocator.free(instruction);
         // std.log.warn("instruction: {any}", .{instruction});
         // std.log.warn("expected: {any}", .{tt.expected});
-        assert(instruction.len == tt.expected.len);
+        try std.testing.expectEqual(instruction.len, tt.expected.len);
 
         for (tt.expected, 0..) |expected, i| {
-            assert(instruction[i] == expected);
+            try std.testing.expectEqual(instruction[i], expected);
         }
     }
 }
@@ -397,6 +426,7 @@ test "test instruction string" {
         make(test_allocator, definitions, @intFromEnum(Constants.OpGetLocal), &[_]usize{1}),
         make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{2}),
         make(test_allocator, definitions, @intFromEnum(Constants.OpConstant), &[_]usize{65535}),
+        make(test_allocator, definitions, @intFromEnum(Constants.OpClosure), &[_]usize{ 65535, 255 }),
     };
 
     const expected: []const u8 =
@@ -404,6 +434,7 @@ test "test instruction string" {
         \\0001 OpGetLocal 1
         \\0003 OpConstant 2
         \\0006 OpConstant 65535
+        \\0009 OpClosure 65535 255
         \\
     ;
 
@@ -425,6 +456,7 @@ test "test read operands" {
     const tests = [_]struct { op: Opcode, operands: []const usize, bytesRead: usize }{
         .{ .op = @intFromEnum(Constants.OpConstant), .operands = &[_]usize{65535}, .bytesRead = 2 },
         .{ .op = @intFromEnum(Constants.OpGetLocal), .operands = &[_]usize{255}, .bytesRead = 1 },
+        .{ .op = @intFromEnum(Constants.OpClosure), .operands = &[_]usize{ 65535, 255 }, .bytesRead = 3 },
     };
 
     var definitions = try initDefinitions(test_allocator);

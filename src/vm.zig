@@ -36,7 +36,7 @@ pub const VM = struct {
     framesIndex: usize,
 
     pub fn init(allocator: std.mem.Allocator, bytecode: compiler.Compiler.Bytecode) Self {
-        const arena = std.heap.ArenaAllocator.init(allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
         var stack: [StackSize]object.Object = undefined;
         @memset(&stack, .nil);
 
@@ -46,12 +46,23 @@ pub const VM = struct {
         var frames: [MaxFrames]frame.Frame = undefined;
         @memset(&frames, undefined);
 
-        const compiledFn = object.Object{ .compiledFunction = .{
-            .instructions = bytecode.instructions,
-            .numLocals = 0,
-            .numParameters = 0,
-        } };
-        const mainFrame = frame.Frame.init(compiledFn, 0);
+        const mainFn = object.Object{
+            .compiledFunction = .{
+                .instructions = bytecode.instructions,
+                .numLocals = 0,
+                .numParameters = 0,
+            },
+        };
+
+        const free = ArrayList(object.Object).init(arena.allocator());
+        const mainClosure = object.Object{
+            .closure = .{
+                .func = mainFn.compiledFn(),
+                .free = free,
+            },
+        };
+
+        const mainFrame = frame.Frame.init(mainClosure, 0);
 
         frames[0] = mainFrame;
 
@@ -267,6 +278,24 @@ pub const VM = struct {
                     const definition = builtins.Builtins[builtinIndex];
                     try self.push(definition.builtin);
                 },
+                .OpClosure => {
+                    const constIndex = readUint16(ins, ip + 1);
+                    const numFree = ins[ip + 3];
+                    self.currentFrame().ip += 3;
+
+                    try self.pushClosure(constIndex, @intCast(numFree));
+                },
+                .OpGetFree => {
+                    const freeIndex = ins[ip + 1];
+                    self.currentFrame().ip += 1;
+
+                    const currentClosure = self.currentFrame().cl.closureFn();
+                    try self.push(currentClosure.free.items[freeIndex]);
+                },
+                .OpCurrentClosure => {
+                    const currentClosure = self.currentFrame().cl;
+                    try self.push(currentClosure);
+                },
                 .OpNull => {
                     try self.push(Null);
                 },
@@ -278,6 +307,23 @@ pub const VM = struct {
         var buf: [2]u8 = undefined;
         @memcpy(&buf, s[ip .. ip + 2]);
         return std.mem.readInt(u16, &buf, .big);
+    }
+
+    fn pushClosure(self: *Self, constIndex: u16, numFree: usize) !void {
+        const constant = self.constants[constIndex];
+        const function = constant.compiledFn();
+        var free = ArrayList(object.Object).init(self.arena.allocator());
+
+        for (0..numFree) |i| {
+            // const free = self.currentFrame().instructions()[freeIndex];
+            const obj = self.stack[@intCast(self.sp - numFree + i)];
+            try free.append(obj);
+        }
+
+        self.sp -= numFree;
+
+        const closure = object.Object{ .closure = .{ .func = function, .free = free } };
+        try self.push(closure);
     }
 
     fn callFunction(self: *Self, callee: *const object.Object, numArgs: u8) !void {
@@ -313,11 +359,24 @@ pub const VM = struct {
         }
     }
 
+    fn callClosure(self: *Self, cl: *const object.Object, numArgs: u8) !void {
+        const closure = cl.closureFn();
+        if (numArgs != closure.func.numParameters) {
+            // return std.fmt.allocPrint(self.arena.allocator(), "wrong number of arguments: want={d}, got={d}", .{ f.numParameters, numArgs });
+            return VMError.WrongNumberOfArguments;
+        }
+        // const f = closure.closureFn();
+        // const c = closure.closureFree();
+        const newFrame = frame.Frame.init(cl.*, @intCast(self.sp - numArgs));
+        self.pushFrame(newFrame);
+        self.sp = @as(usize, @intCast(newFrame.basePointer + closure.func.numLocals));
+    }
+
     fn executeCall(self: *Self, numArgs: u8) !void {
         const callee = self.stack[self.sp - 1 - numArgs];
         switch (callee) {
-            .compiledFunction => {
-                return try self.callFunction(&callee, numArgs);
+            .closure => {
+                return try self.callClosure(&callee, numArgs);
             },
             .builtin => {
                 // const builtin = callee.builtin;
@@ -855,7 +914,72 @@ test "test builtin functions" {
         .{ .input = "rest([1, 2, 3])", .expected = .{ .intArray = &[_]i64{ 2, 3 } } },
         .{ .input = "rest([])", .expected = .nil },
         .{ .input = "push([], 1)", .expected = .{ .intArray = &[_]i64{1} } },
-        // .{ .input = "push(1, 1)", .expected = .{ .err = "argument to `push` must be ARRAY, got INTEGER" } },
+        .{ .input = "push(1, 1)", .expected = .{ .err = "argument to `push` must be ARRAY, got INTEGER" } },
+    };
+
+    try runTests(tests);
+}
+
+test "test closures" {
+    const tests = &[_]vmTestCase{
+        .{
+            .input = "let newClosure = fn(a) { fn() { a; }; }; let closure = newClosure(99); closure();",
+            .expected = .{ .integer = 99 },
+        },
+        .{
+            .input = "let newAdder = fn(a, b) { fn(c) { a + b + c; }; }; let adder = newAdder(1, 2); adder(8);",
+            .expected = .{ .integer = 11 },
+        },
+        .{
+            .input = "let newAdder = fn(a, b) { let c = a + b; fn(d) { c + d; }; }; let adder = newAdder(1, 2); adder(8);",
+            .expected = .{ .integer = 11 },
+        },
+        .{
+            .input = "let newAdderOuter = fn(a, b) { let c = a + b; fn(d) { let e = d + c; fn(f) { e + f; }; }; }; let newAdderInner = newAdderOuter(1, 2); let adder = newAdderInner(3); adder(8);",
+            .expected = .{ .integer = 14 },
+        },
+        .{
+            .input = "let a = 1; let newAdderOuter = fn(b) { fn(c) { fn(d) { a + b + c + d; }; }; }; let newAdderInner = newAdderOuter(2); let adder = newAdderInner(3); adder(8);",
+            .expected = .{ .integer = 14 },
+        },
+        .{
+            .input = "let newClosure = fn(a, b) { let one = fn() { a; }; let two = fn() { b; }; fn() { one() + two(); }; }; let closure = newClosure(9, 90); closure();",
+            .expected = .{ .integer = 99 },
+        },
+    };
+
+    try runTests(tests);
+}
+
+test "test recursive functions" {
+    const tests = &[_]vmTestCase{
+        .{
+            .input = "let countDown = fn(x) { if (x == 0) { return 0; } else { countDown(x - 1); } }; countDown(1);",
+            .expected = .{ .integer = 0 },
+        },
+        .{
+            .input = "let countDown = fn(x) { if (x == 0) { return 0; } else { countDown(x - 1); } }; let wrapper = fn() { countDown(1); }; wrapper();",
+            .expected = .{ .integer = 0 },
+        },
+        .{
+            .input = "let wrapper = fn() { let countDown = fn(x) { if (x == 0) { return 0; } else { countDown(x - 1); } }; countDown(1); }; wrapper();",
+            .expected = .{ .integer = 0 },
+        },
+        .{
+            .input = "let wrapper = fn() { let countDown = fn(x) { if (x == 0) { return 0; } else { countDown(x - 1); } }; countDown(2); }; wrapper();",
+            .expected = .{ .integer = 0 },
+        },
+    };
+
+    try runTests(tests);
+}
+
+test "test recursive finbonacci" {
+    const tests = &[_]vmTestCase{
+        .{
+            .input = "let fibonacci = fn(x) { if (x == 0) { return 0; } else { if (x == 1) { return 1; } else { fibonacci(x - 1) + fibonacci(x - 2); } } }; fibonacci(15);",
+            .expected = .{ .integer = 610 },
+        },
     };
 
     try runTests(tests);

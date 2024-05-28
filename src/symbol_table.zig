@@ -4,11 +4,15 @@ pub const SymbolScope = enum {
     global,
     local,
     builtin,
+    free,
+    function,
 
     pub const SymbolNameTable = [@typeInfo(SymbolScope).Enum.fields.len][:0]const u8{
         "global",
         "local",
         "builtin",
+        "free",
+        "function",
     };
 
     pub fn str(self: SymbolScope) [:0]const u8 {
@@ -29,6 +33,7 @@ pub const SymbolTable = struct {
     store: std.StringHashMap(Symbol),
     num_definitions: i32,
     outer: ?*SymbolTable,
+    freeSymbols: std.ArrayList(Symbol),
 
     pub fn init(allocator: std.mem.Allocator) *SymbolTable {
         // var arena = std.heap.ArenaAllocator.init(allocator);
@@ -39,6 +44,7 @@ pub const SymbolTable = struct {
             .store = std.StringHashMap(Symbol).init(allocator),
             .num_definitions = 0,
             .outer = null,
+            .freeSymbols = std.ArrayList(Symbol).init(allocator),
         };
 
         return st;
@@ -53,6 +59,7 @@ pub const SymbolTable = struct {
             .store = std.StringHashMap(Symbol).init(allocator),
             .num_definitions = 0,
             .outer = outer,
+            .freeSymbols = std.ArrayList(Symbol).init(allocator),
         };
 
         return st;
@@ -104,11 +111,45 @@ pub const SymbolTable = struct {
         return symbol;
     }
 
+    pub fn defineFree(self: *Self, original: Symbol) !Symbol {
+        try self.freeSymbols.append(original);
+
+        const symbol = .{
+            .name = original.name,
+            .scope = SymbolScope.free,
+            .index = self.freeSymbols.items.len - 1,
+        };
+
+        try self.store.put(original.name, symbol);
+        return symbol;
+    }
+
+    pub fn defineFunctionName(self: *Self, name: []const u8) !Symbol {
+        const symbol = .{
+            .name = name,
+            .scope = SymbolScope.function,
+            .index = 0,
+        };
+
+        try self.store.put(name, symbol);
+        return symbol;
+    }
+
     pub fn resolve(self: *Self, name: []const u8) ?Symbol {
         const obj = self.store.get(name);
         if (obj == null and self.outer != null) {
             if (self.outer) |outer| {
-                return outer.resolve(name);
+                const o = outer.resolve(name);
+                if (o == null) {
+                    return obj;
+                }
+
+                if (o.?.scope == SymbolScope.global or o.?.scope == SymbolScope.builtin) {
+                    return o;
+                }
+
+                const free = self.defineFree(o.?) catch unreachable;
+                return free;
             }
         }
 
@@ -291,4 +332,140 @@ test "test define resolve builtins" {
             try expectEqual(result.?, sym);
         }
     }
+}
+
+test "test resolve free" {
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
+    var global = SymbolTable.init(arena.allocator());
+    _ = try global.define("a");
+    _ = try global.define("b");
+    // defer global.deinit();
+    // defer test_allocator.destroy(global);
+    var firstLocal = SymbolTable.initEnclosedScope(arena.allocator(), global);
+    _ = try firstLocal.define("c");
+    _ = try firstLocal.define("d");
+
+    var secondLocal = SymbolTable.initEnclosedScope(arena.allocator(), firstLocal);
+    _ = try secondLocal.define("e");
+    _ = try secondLocal.define("f");
+
+    const tests = &[_]struct {
+        table: *SymbolTable,
+        expectedSymbols: []const Symbol,
+        expectedFreeSymbols: []const Symbol,
+    }{
+        .{
+            .table = firstLocal,
+            .expectedSymbols = &[_]Symbol{
+                .{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+                .{ .name = "b", .scope = SymbolScope.global, .index = 1 },
+                .{ .name = "c", .scope = SymbolScope.local, .index = 0 },
+                .{ .name = "d", .scope = SymbolScope.local, .index = 1 },
+            },
+            .expectedFreeSymbols = &[_]Symbol{},
+        },
+        .{
+            .table = secondLocal,
+            .expectedSymbols = &[_]Symbol{
+                .{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+                .{ .name = "b", .scope = SymbolScope.global, .index = 1 },
+                .{ .name = "c", .scope = SymbolScope.free, .index = 0 },
+                .{ .name = "d", .scope = SymbolScope.free, .index = 1 },
+                .{ .name = "e", .scope = SymbolScope.local, .index = 0 },
+                .{ .name = "f", .scope = SymbolScope.local, .index = 1 },
+            },
+            .expectedFreeSymbols = &[_]Symbol{
+                .{ .name = "c", .scope = SymbolScope.local, .index = 0 },
+                .{ .name = "d", .scope = SymbolScope.local, .index = 1 },
+            },
+        },
+    };
+
+    for (tests) |tt| {
+        for (tt.expectedSymbols) |sym| {
+            const result = tt.table.resolve(sym.name);
+            try expectEqual(result.?, sym);
+        }
+
+        try expectEqual(tt.table.freeSymbols.items.len, tt.expectedFreeSymbols.len);
+
+        for (tt.expectedFreeSymbols, 0..) |sym, i| {
+            const result = tt.table.freeSymbols.items[i];
+            try expectEqual(result, sym);
+        }
+    }
+}
+
+test "test resolve unresolvable free" {
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
+
+    var global = SymbolTable.init(arena.allocator());
+    _ = try global.define("a");
+    // defer global.deinit();
+    // defer test_allocator.destroy(global);
+    var firstLocal = SymbolTable.initEnclosedScope(arena.allocator(), global);
+    _ = try firstLocal.define("c");
+
+    var secondLocal = SymbolTable.initEnclosedScope(arena.allocator(), firstLocal);
+    _ = try secondLocal.define("e");
+    _ = try secondLocal.define("f");
+
+    const expected = &[_]Symbol{
+        .{ .name = "a", .scope = SymbolScope.global, .index = 0 },
+        .{ .name = "c", .scope = SymbolScope.free, .index = 0 },
+        .{ .name = "e", .scope = SymbolScope.local, .index = 0 },
+        .{ .name = "f", .scope = SymbolScope.local, .index = 1 },
+    };
+
+    for (expected) |sym| {
+        const result = secondLocal.resolve(sym.name);
+        try expectEqual(result.?, sym);
+    }
+
+    const expectedUnresolvable = &[_][]const u8{
+        "b",
+        "d",
+    };
+
+    for (expectedUnresolvable) |name| {
+        const result = secondLocal.resolve(name);
+        try expectEqual(result, null);
+    }
+}
+
+test "test define and resolve function name" {
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
+
+    var global = SymbolTable.init(arena.allocator());
+    _ = try global.defineFunctionName("a");
+
+    const expected = Symbol{ .name = "a", .scope = SymbolScope.function, .index = 0 };
+
+    const result = global.resolve(expected.name);
+    try expectEqual(result, expected);
+}
+
+test "test shadowing function name" {
+    var arena = std.heap.ArenaAllocator.init(test_allocator);
+    defer arena.deinit();
+
+    var global = SymbolTable.init(arena.allocator());
+    _ = try global.defineFunctionName("a");
+    _ = try global.define("a");
+
+    const expected = Symbol{ .name = "a", .scope = SymbolScope.global, .index = 0 };
+
+    const result = global.resolve(expected.name);
+    try expectEqual(result, expected);
+
+    // var firstLocal = SymbolTable.initEnclosedScope(arena.allocator(), global);
+    // _ = try firstLocal.define("c");
+
+    // const expectedShadowed = Symbol{ .name = "a", .scope = SymbolScope.local, .index = 0 };
+
+    // const resultShadowed = firstLocal.resolve("a");
+    // try expectEqual(resultShadowed, expectedShadowed);
 }

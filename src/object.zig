@@ -49,6 +49,13 @@ pub const Function = struct {
     env: *environment.Environment,
 };
 
+pub const Closure = struct {
+    const Self = @This();
+
+    func: CompiledFunction,
+    free: ArrayList(Object),
+};
+
 pub const Object = union(enum) {
     const Self = @This();
     // allocator: std.mem.Allocator,
@@ -59,6 +66,7 @@ pub const Object = union(enum) {
     returnValue: *Self,
     function: Function,
     compiledFunction: CompiledFunction,
+    closure: Closure,
     string: []const u8,
     builtin: BuiltinFn,
     array: ArrayList(*Self),
@@ -122,6 +130,7 @@ pub const Object = union(enum) {
             .array => "ARRAY",
             .hash => "HASH",
             .compiledFunction => "COMPILED_FUNCTION",
+            .closure => "CLOSURE",
         };
     }
 
@@ -147,6 +156,13 @@ pub const Object = union(enum) {
         return switch (self.*) {
             .builtin => |b| b,
             else => std.debug.panic("not a builtin function", .{}),
+        };
+    }
+
+    pub fn closureFn(self: *const Self) Closure {
+        return switch (self.*) {
+            .closure => |c| c,
+            else => std.debug.panic("not a closure", .{}),
         };
     }
 
@@ -217,6 +233,9 @@ pub const Object = union(enum) {
             },
             .compiledFunction => |cf| {
                 try writer.print("CompiledFunction: {any}", .{cf});
+            },
+            .closure => |c| {
+                try writer.print("Closure[{any}]", .{c});
             },
         }
     }

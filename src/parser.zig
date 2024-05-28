@@ -542,7 +542,7 @@ pub const Parser = struct {
 
         const body = self.parseBlockStatement();
 
-        exp.* = .{ .functionLiteral = .{ .parameters = parameters, .body = body } };
+        exp.* = .{ .functionLiteral = .{ .parameters = parameters, .body = body, .name = "" } };
 
         return exp;
     }
@@ -580,6 +580,10 @@ pub const Parser = struct {
         const value = self.parseExpression(.lowest) orelse {
             return stmt;
         };
+
+        if (std.mem.eql(u8, @tagName(value.*), @tagName(ast.Expression.functionLiteral))) {
+            value.*.functionLiteral.name = ident.identifier;
+        }
 
         if (self.peekTokenIs(.semicolon)) {
             self.nextToken();
@@ -1357,6 +1361,28 @@ test "test parsing hash literals with expressions" {
             // assert(pair.value_ptr.*.integer == tt.value);
         }
     }
+}
+
+test "test function literal with name" {
+    const input = "let myFunction = fn() { };";
+
+    var l = lexer.Lexer.init(test_allocator, input);
+    defer l.deinit();
+
+    var p = Parser.init(l, test_allocator);
+    defer p.deinit();
+
+    const prog = p.parseProgram();
+    checkParserErrors(p.getErrors());
+
+    assert(prog.statements.items.len == 1);
+
+    const stmt = prog.statements.items[0];
+    // std.log.warn("{s}", .{stmt});
+    assert(std.mem.eql(u8, @tagName(stmt.*), @tagName(ast.Statement.letStatement)));
+    const letStmt = stmt.letStatement;
+    assert(std.mem.eql(u8, @tagName(letStmt.expression.*), @tagName(ast.Expression.functionLiteral)));
+    try std.testing.expectEqualSlices(u8, letStmt.expression.functionLiteral.name, "myFunction");
 }
 
 fn testInfixExpression(exp: *ast.Expression, left: val, operator: []const u8, right: val) void {

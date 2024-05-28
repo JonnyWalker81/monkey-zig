@@ -37,6 +37,7 @@ pub const Expression = union(enum) {
     functionLiteral: struct {
         parameters: ArrayList(*Identifier),
         body: *BlockStatement,
+        name: []const u8,
     },
     callExpression: struct {
         function: *Expression,
@@ -110,6 +111,9 @@ pub const Expression = union(enum) {
                 }
                 try writer.print(") ", .{});
                 try writer.print("{s}", .{fnLit.body});
+                if (fnLit.name.len > 0) {
+                    try writer.print(" as {s}", .{fnLit.name});
+                }
             },
             .callExpression => |call| {
                 try writer.print("{s}(", .{call.function});
